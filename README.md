@@ -15,7 +15,7 @@ This cross-platform script connects to one or more Philips Hue Bridges, fetches 
 - **optimised API Usage:** Uses an optimised number of API calls to retrieve all resource data, including detailed scene information, making it fast and efficient.
 - **Intelligent Rule Analysis:** Intelligently decodes and links rules, conditions, and actions to the corresponding sensors, lights, groups, and schedules, providing a human-readable interpretation of your Hue system's logic.
 - **Easy Configuration:** A simple JSON file (`hue_bridges_conf.json`) is used to configure the bridge(s).
-- **Custom Naming:** An optional `hue_serials_mapping-plain-text-info.txt` file allows you to map device serial numbers to your devices.
+- **Plain Text support for Serial Numbers import:** An optional `hue_serials_mapping-plain-text-info.txt` file allows you to map device serial numbers to your devices.
 
 ## Example Report
 
