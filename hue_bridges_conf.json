@@ -1,0 +1,12 @@
+[
+  {
+    "name": "YOUR_BRIDGE_1_NAME",
+    "ip": "YOUR_BRIDGE_1_IP",
+    "user": "YOUR_BRIDGE_1_GENERATED_API_USER"
+  },
+  {
+    "name": "YOUR_BRIDGE_2_NAME",
+    "ip": "YOUR_BRIDGE_2_NAME",
+    "user": "YOUR_BRIDGE_2_GENERATED_API_USER"
+  }
+]

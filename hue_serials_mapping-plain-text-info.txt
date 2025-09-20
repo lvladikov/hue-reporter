@@ -1,0 +1,19 @@
+# To speed up the process, the script can use this file to 
+# automatically fill in serial numbers when you run option 2.
+#
+#    - File Format: Add one line per device using the pattern:
+#      SN: <SERIAL_NUMBER> -> <DEVICE_NAME>
+#
+#    - Comments: Lines starting with a hash symbol (#) are ignored.
+#
+#    - Examples:
+#
+#      # My Hue Lights Inventory
+#
+#      # Living Room
+#      SN: H12345678 -> Living Room Ceiling 1
+#      SN: H87654321 -> Living Room Lamp
+#      # SN: H00000000 -> Old lamp (commented out for now)
+#
+#      # Kitchen
+#      - SN: K99887766 -> Kitchen Under Cabinet
