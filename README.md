@@ -2,6 +2,10 @@
 
 This cross-platform script connects to one or more Philips Hue Bridges, fetches data about all assets using an optimized set of API calls, and generates a human-readable HTML report as well as a raw JSON data dump. For multi-bridge setups, it fetches data in parallel to save time.
 
+## Disclaimer
+
+**Read-Only:** This script is for reporting and visualization purposes only. It performs read-only operations and will not make any changes to the state of your Hue lights, switches, or any other devices. It is a safe tool for visualization and research of your Hue system's configuration.
+
 ## Features
 
 - **Comprehensive Reporting:** Generates a detailed HTML report of all Hue assets, including lights, switches, sensors, and more.
