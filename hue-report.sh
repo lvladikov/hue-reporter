@@ -383,8 +383,12 @@ fetch_data() {
             lights: .lights
         }')
         
-        combined_response=$(echo "$combined_response" | jq --argjson data "$bridge_data" '. + [$data]')
-        echo "     Successfully processed and merged data for '$(echo "$bridge_data" | jq -r .bridge_name)'."
+        # Safely merge the new bridge data via standard input to avoid "Argument list too long"
+        combined_response=$(printf '%s\n%s' "$combined_response" "$bridge_data" | jq -s '.[0] + [.[1]]')
+
+        # Extract bridge name for logging
+        bridge_name=$(jq -r .bridge_name <<< "$bridge_data")
+        echo "     Successfully processed and merged data for '$bridge_name'."
         rm "$tmp_file" # Clean up
     done
 
@@ -660,7 +664,7 @@ generate_report() {
 
     local all_lights_json
     if [[ "$report_generation_successful" == "true" ]]; then
-        all_lights_json=$(echo "$sorted_bridges_json" | jq --argjson serials "$serials_json_content" '[.[] | .lights | to_entries | .[] | .value + {light_id: .key, bridgeName: ($serials[.value.uniqueid].bridgeName // "Unknown Bridge")}] | sort_by(.bridgeName, .name)')
+        all_lights_json=$(echo "$sorted_bridges_json" | jq '[.[] as $bridge | $bridge.lights | to_entries | .[] | .value + {light_id: .key, bridgeName: $bridge.bridge_name}] | sort_by(.bridgeName, .name)')
         if [[ $? -ne 0 ]]; then echo "Error: jq failed while creating flat list of all lights." >&2; report_generation_successful=false; fi
     fi
 
@@ -1591,4 +1595,4 @@ load_config
 check_dependencies
 main_menu
 
-exit 0
+exit 0                                                             
