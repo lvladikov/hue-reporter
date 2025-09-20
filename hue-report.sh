@@ -349,21 +349,36 @@ fetch_data() {
         local bridge_user=$(echo "$response_json" | jq -r '.bridge_user')
         local scenes_json=$(echo "$response_json" | jq '.scenes')
         local scene_ids=$(echo "$scenes_json" | jq -r 'keys[]')
-        
+
         if [[ -n "$scene_ids" ]]; then
-            echo "     Fetching details for scenes on '$(echo "$response_json" | jq -r '.config.name')'..."
-            for scene_id in $scene_ids; do
-                local scene_detail_url="http://${bridge_ip}/api/${bridge_user}/scenes/${scene_id}"
-                local scene_detail_response=$(curl --connect-timeout 5 -s "$scene_detail_url")
+            echo "      Fetching details for scenes on '$(echo "$response_json" | jq -r '.config.name')'..."
+
+            # 1. Create a secure temporary file to hold the scene updates.
+            local updates_tmp_file
+            updates_tmp_file=$(mktemp)
+
+             # 2. Gather all lightstate updates and redirect the stream into the temporary file.
+            echo "$scene_ids" | while IFS= read -r scene_id; do
+                if [[ -z "$scene_id" ]]; then continue; fi
                 
-                # Merge the detailed lightstates back into the main scenes object
-                if echo "$scene_detail_response" | jq -e '.lightstates' &>/dev/null; then
-                    local lightstates=$(echo "$scene_detail_response" | jq '.lightstates')
-                    scenes_json=$(echo "$scenes_json" | jq --arg id "$scene_id" --argjson states "$lightstates" '.[$id].lightstates = $states')
-                fi
-            done
-            # Replace the original scenes object with the updated one
-            response_json=$(echo "$response_json" | jq --argjson new_scenes "$scenes_json" '.scenes = $new_scenes')
+                # Add this line to remove the carriage return for Windows compatibility
+                scene_id=${scene_id%$'\r'}
+
+                local scene_detail_url="http://${bridge_ip}/api/${bridge_user}/scenes/${scene_id}"
+                curl --connect-timeout 5 -s "$scene_detail_url" | jq -c --arg id "$scene_id" 'select(.lightstates) | {id: $id, lightstates: .lightstates}'
+            done > "$updates_tmp_file"
+
+            # 3. If the temporary file is not empty, perform the single merge operation.
+            if [[ -s "$updates_tmp_file" ]]; then # The -s flag checks that the file has content.
+                response_json=$(echo "$response_json" | jq --slurpfile updates "$updates_tmp_file" '
+                    reduce $updates[] as $u (.;
+                        .scenes[$u.id].lightstates = $u.lightstates
+                    )
+                ')
+            fi
+
+            # 4. Clean up the temporary file.
+            rm -f "$updates_tmp_file"
         fi
         # --- END NEW SECTION ---
 
@@ -388,7 +403,7 @@ fetch_data() {
 
         # Extract bridge name for logging
         bridge_name=$(jq -r .bridge_name <<< "$bridge_data")
-        echo "     Successfully processed and merged data for '$bridge_name'."
+        echo "      Successfully processed and merged data for '$bridge_name'."
         rm "$tmp_file" # Clean up
     done
 
@@ -471,7 +486,7 @@ generate_serials_file() {
             })
         ')
         
-        combined_array=$(echo "$combined_array" | jq --argjson data "$partial_array" '. + $data')
+        combined_array=$(printf '%s\n%s' "$combined_array" "$partial_array" | jq -s '.[0] + .[1]')
     done
     
     if [[ "$combined_array" == "[]" || "$combined_array" == "null" ]]; then
@@ -522,8 +537,9 @@ generate_serials_file() {
     fi
 
     local intermediate_array
-    intermediate_array=$(echo "$combined_array" | jq --argjson existing_serials "$existing_serials_json" --argjson text_serials "$text_serials_json" '
-        map(
+    intermediate_array=$(printf '%s\n%s\n%s' "$combined_array" "$existing_serials_json" "$text_serials_json" | jq -s '
+        .[0] as $combined_array | .[1] as $existing_serials | .[2] as $text_serials |
+        $combined_array | map(
             . as $item |
             . + {
                 existing_serial: ($existing_serials[$item.uniqueid].serialNumber // ""),
@@ -789,8 +805,10 @@ EOF
     fi
 
     if [[ "$report_generation_successful" == "true" ]]; then
-        local missing_serials_exist=false
-        if [[ $(echo "$all_lights_json" | jq --argjson serials "$serials_json_content" '[.[] | select(($serials[.uniqueid].serialNumber // "") == "")] | length') -gt 0 ]]; then
+        if [[ $(printf '%s\n%s' "$all_lights_json" "$serials_json_content" | jq -s '
+            .[0] as $all_lights | .[1] as $serials |
+            $all_lights | map(select(($serials[.uniqueid].serialNumber // "") == "")) | length
+        ') -gt 0 ]]; then
             missing_serials_exist=true
         fi
 
@@ -994,15 +1012,15 @@ EOF
                 echo "         - Processing Group: 'Unassigned'"
             fi
 
-            all_groups_and_lights_html=$(echo "$bridge_obj" | jq --argjson serials "$serials_json_content" -r "$jq_functions"'
-                . as $bridge |
+            all_groups_and_lights_html=$(printf '%s\n%s' "$bridge_obj" "$serials_json_content" | jq -s -r "$jq_functions"'
+                .[0] as $bridge | .[1] as $serials |
                 ($bridge.bridge_name | gsub("[^a-zA-Z0-9_-]"; "-")) as $safe_bridge_name |
                 ($bridge.lights | to_entries | map(.value + {light_id: .key})) as $lights_with_ids |
-                (.groups | to_entries | reduce .[] as $group ({}; reduce $group.value.lights[] as $light_id (.; .[$light_id] += [{name: $group.value.name, id: $group.key}]))) as $light_to_groups_map |
+                ($bridge.groups | to_entries | reduce .[] as $group ({}; reduce $group.value.lights[] as $light_id (.; .[$light_id] += [{name: $group.value.name, id: $group.key}]))) as $light_to_groups_map |
                 ($lights_with_ids | reduce .[] as $light ({}; . + {($light.light_id): {name: $light.name, uniqueid: $light.uniqueid}})) as $light_id_to_details_map |
                 ($bridge.scenes | to_entries | reduce .[] as $scene ({}; reduce ($scene.value.lights // [])[] as $light_id (.; .[$light_id] += [{name: $scene.value.name, id: $scene.key}]))) as $light_to_scenes_map |
 
-                ([.groups | to_entries[] | {id: .key, value: .value}] | sort_by(.value.name)) as $sorted_groups_raw |
+                ([$bridge.groups | to_entries[] | {id: .key, value: .value}] | sort_by(.value.name)) as $sorted_groups_raw |
                 (
                     if ([ $lights_with_ids[] | select(($light_to_groups_map[.light_id] | length // 0) == 0)] | length) > 0 then
                         $sorted_groups_raw + [{"id": "unassigned", "value": {"name": "Unassigned", "lights": [], "type": "System"}}]
@@ -1405,8 +1423,9 @@ EOF
     # --- Add Summary Sections ---
     if [[ "$report_generation_successful" == "true" ]]; then
         echo "--> Generating Summary Sections..."
-        missing_serials_summary=$(echo "$all_lights_json" | jq --argjson serials "$serials_json_content" -r '
-            map(select(($serials[.uniqueid].serialNumber // "") == ""))
+        missing_serials_summary=$(printf '%s\n%s' "$all_lights_json" "$serials_json_content" | jq -s -r '
+            .[0] as $all_lights | .[1] as $serials |
+            $all_lights | map(select(($serials[.uniqueid].serialNumber // "") == ""))
             | group_by(.bridgeName)
             | if length > 0 then
                 "<h2 class=\"summary-title\" id=\"summary-missing-serials\">Lights with Missing Serial Numbers</h2>" +
