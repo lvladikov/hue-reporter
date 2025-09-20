@@ -10,7 +10,7 @@ This cross-platform script connects to one or more Philips Hue Bridges, fetches 
 
 - **Comprehensive Reporting:** Generates a detailed HTML report of all Hue assets, including lights, switches, sensors, and more.
 - **Rich Visualizations:** The HTML report generates rich, dynamic infographics to visually represent brightness, saturation, hue, and color temperature. For Entertainment groups, it creates a 3D representation of the light positions, helping to visualize their spatial arrangement.
-- **Raw Data Export:** Creates a `hue-data.json` file containing the complete, unprocessed data from the Hue Bridge(s) for advanced analysis.
+- **Raw Data Export:** Creates a `Hue.Report-<BridgeName>-<Timestamp>.json` file containing the complete, unprocessed data from the Hue Bridge(s) for advanced analysis.
 - **Multi-Bridge Support:** Connects to multiple Hue Bridges simultaneously, fetching data in parallel to minimize execution time.
 - **optimised API Usage:** Uses an optimised number of API calls to retrieve all resource data, including detailed scene information, making it fast and efficient.
 - **Intelligent Rule Analysis:** Intelligently decodes and links rules, conditions, and actions to the corresponding sensors, lights, groups, and schedules, providing a human-readable interpretation of your Hue system's logic.
