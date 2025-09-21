@@ -1614,4 +1614,4 @@ load_config
 check_dependencies
 main_menu
 
-exit 0                                                             
+exit 0
