@@ -10,7 +10,7 @@
 # jobs appropriate for the system's CPU cores.
 #
 # Author: Lachezar Vladikov
-# Version: 1.1.9
+# Version: 1.2.0
 #
 # ==============================================================================
 # REQUIREMENTS
@@ -177,6 +177,7 @@
 # This method is robust and works on macOS, Linux, and in Git Bash for Windows.
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 CONFIG_FILE="$SCRIPT_DIR/hue_bridges_conf.json"
+LOW_BATTERY_THRESHOLD=10 # Set the warning threshold for battery percentage
 
 # Global variable to hold the loaded bridge configuration
 BRIDGES_JSON=""
@@ -199,9 +200,9 @@ load_config() {
         echo "Please ensure it is in the same directory as this script and add your bridge details."
         exit 1
     fi
-    
+
     BRIDGES_JSON=$(cat "$CONFIG_FILE")
-    
+
     # Validate the JSON
     if ! echo "$BRIDGES_JSON" | jq empty &>/dev/null; then
         echo "Error: Configuration file '$CONFIG_FILE' contains invalid JSON."
@@ -226,7 +227,7 @@ check_dependencies() {
 # Function to allow the user to select a bridge for reporting
 select_bridge() {
     echo "Please select a Hue Bridge to report on:"
-    
+
     local bridge_count
     bridge_count=$(echo "$BRIDGES_JSON" | jq 'length')
 
@@ -235,7 +236,7 @@ select_bridge() {
         echo "Please edit the configuration file and add your bridge details."
         exit 1
     fi
-    
+
     # Dynamically display bridges from JSON
     for i in $(seq 0 $((bridge_count - 1))); do
         local name
@@ -248,7 +249,7 @@ select_bridge() {
     # Add the "All Bridges" option
     local all_option_num=$((bridge_count + 1))
     echo "  $all_option_num. All Configured Bridges"
-    
+
     local choice
     read -p "Enter number (1-$all_option_num) [default: $all_option_num]: " choice
 
@@ -263,7 +264,7 @@ select_bridge() {
     elif [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le "$bridge_count" ]; then
         local selected_bridge_obj
         selected_bridge_obj=$(echo "$BRIDGES_JSON" | jq ".[$((choice-1))]")
-        
+
         # Set global variables for the selected bridge
         SELECTED_BRIDGE_IP=$(echo "$selected_bridge_obj" | jq -r ".ip")
         SELECTED_BRIDGE_USER=$(echo "$selected_bridge_obj" | jq -r ".user")
@@ -287,13 +288,13 @@ fetch_data() {
         echo "Fetching data from '$SELECTED_BRIDGE_NAME'..."
         bridges_to_fetch_json=$(echo "$BRIDGES_JSON" | jq --arg name "$SELECTED_BRIDGE_NAME" '[.[] | select(.name == $name)]')
     fi
-    
+
     local core_count=$(get_core_count)
     echo "Using up to $core_count parallel jobs for fetching..."
 
     local pids=()
     local tmp_files=()
-    
+
     # Launch curl jobs in the background, managed by the number of CPU cores
     # Note: wait -n requires Bash 4.3+, which is standard on modern systems.
     local job_count=0
@@ -308,13 +309,13 @@ fetch_data() {
         local current_user=$(echo "$bridge_obj" | jq -r '.user')
         local tmp_file=$(mktemp)
         tmp_files+=("$tmp_file")
-        
+
         (
             echo "--> Contacting '${current_name}'..."
             local full_url="http://${current_ip}/api/${current_user}"
             local response
             response=$(curl --connect-timeout 5 -s "$full_url")
-            
+
             # Add bridge IP and user to the response for later processing
             if [[ -n "$response" && "$response" != *"unauthorized user"* ]]; then
                 echo "$response" | jq --arg ip "$current_ip" --arg user "$current_user" '. + {bridge_ip: $ip, bridge_user: $user}' > "$tmp_file"
@@ -336,11 +337,11 @@ fetch_data() {
     for tmp_file in "${tmp_files[@]}"; do
         local response_json
         response_json=$(cat "$tmp_file")
-        
+
         if echo "$response_json" | jq -e '.error' >/dev/null; then
             local bridge_name
             bridge_name=$(echo "$response_json" | jq -r '.bridge_name')
-            echo "     Warning: Could not fetch data from '${bridge_name}'. Skipping."
+            echo "      Warning: Could not fetch data from '${bridge_name}'. Skipping."
             continue
         fi
 
@@ -357,13 +358,11 @@ fetch_data() {
             local updates_tmp_file
             updates_tmp_file=$(mktemp)
 
-             # 2. Gather all lightstate updates and redirect the stream into the temporary file.
+            # 2. Gather all lightstate updates and redirect the stream into the temporary file.
             echo "$scene_ids" | while IFS= read -r scene_id; do
                 if [[ -z "$scene_id" ]]; then continue; fi
-                
-                # Add this line to remove the carriage return for Windows compatibility
+                # Remove potential carriage return for Windows compatibility
                 scene_id=${scene_id%$'\r'}
-
                 local scene_detail_url="http://${bridge_ip}/api/${bridge_user}/scenes/${scene_id}"
                 curl --connect-timeout 5 -s "$scene_detail_url" | jq -c --arg id "$scene_id" 'select(.lightstates) | {id: $id, lightstates: .lightstates}'
             done > "$updates_tmp_file"
@@ -397,7 +396,7 @@ fetch_data() {
             resourcelinks: .resourcelinks,
             lights: .lights
         }')
-        
+
         # Safely merge the new bridge data via standard input to avoid "Argument list too long"
         combined_response=$(printf '%s\n%s' "$combined_response" "$bridge_data" | jq -s '.[0] + [.[1]]')
 
@@ -417,16 +416,15 @@ fetch_data() {
 
 
 # Optimized function to generate the serial number mapping file.
-# Fetches from all bridges in parallel.
 generate_serials_file() {
     echo
     echo "Fetching light and group data from ALL configured bridges in parallel..."
     local serials_file="$SCRIPT_DIR/hue_serials_mapping.json"
     local plain_text_file="$SCRIPT_DIR/hue_serials_mapping-plain-text-info.txt"
-    
+
     local core_count=$(get_core_count)
     echo "Using up to $core_count parallel jobs for fetching..."
-    
+
     # --- Parallel Fetching ---
     local pids=()
     local tmp_files=()
@@ -455,7 +453,7 @@ generate_serials_file() {
         pids+=($!)
         ((job_count++))
     done < <(echo "$BRIDGES_JSON" | jq -c '.[]')
-    
+
     wait "${pids[@]}"
     echo
     echo "All bridges responded. Processing serials..."
@@ -468,7 +466,7 @@ generate_serials_file() {
 
         if echo "$bridge_data" | jq -e '.error' >/dev/null; then
             local bridge_name=$(echo "$bridge_data" | jq -r '.bridgeName')
-            echo "     Warning: Could not fetch lights from '${bridge_name}'. Skipping."
+            echo "      Warning: Could not fetch lights from '${bridge_name}'. Skipping."
             continue
         fi
 
@@ -477,18 +475,19 @@ generate_serials_file() {
 
         local partial_array
         partial_array=$(echo "$bridge_data" | jq --argjson group_map "$light_to_groups_map" '
+            . as $data |
             .lights | to_entries | map({
                 uniqueid: .value.uniqueid,
                 name: .value.name,
                 type: .value.type,
-                bridgeName: .bridgeName,
+                bridgeName: $data.bridgeName,
                 groupNames: ($group_map[.key] | sort // [])
             })
         ')
-        
+
         combined_array=$(printf '%s\n%s' "$combined_array" "$partial_array" | jq -s '.[0] + .[1]')
     done
-    
+
     if [[ "$combined_array" == "[]" || "$combined_array" == "null" ]]; then
         echo "Error: Could not fetch data from any configured bridges. No file generated."
         return
@@ -500,11 +499,11 @@ generate_serials_file() {
         echo "Reading existing serial numbers from '$serials_file'..."
         existing_serials_json=$(cat "$serials_file")
     fi
-    
+
     local text_serials_json="{}"
     if [ -f "$plain_text_file" ]; then
         echo "Parsing plain text serial number file..."
-        
+
         api_names=()
         while IFS= read -r line; do
             api_names+=("$line")
@@ -516,12 +515,12 @@ generate_serials_file() {
             if [[ "$line" =~ ^[[:space:]]*# ]] || [[ -z "$line" ]]; then
                 continue
             fi
-            
+
             # Match the pattern "SN: ... -> ..." anywhere on the line
             if [[ "$line" =~ SN:[[:space:]]*(.+)[[:space:]]+'->'[[:space:]]+(.*)$ ]]; then
                 local serial="${BASH_REMATCH[1]}"
                 local full_name_part="${BASH_REMATCH[2]}"
-                
+
                 for api_name in "${api_names[@]}"; do
                     api_name_safe_for_regex=$(printf '%s\n' "$api_name" | sed 's/[][\.^*$/]/\\&/g')
                     if [[ "$full_name_part" =~ ^${api_name_safe_for_regex}(\ |$) ]]; then
@@ -553,9 +552,9 @@ generate_serials_file() {
         local existing_serial=$(echo "$light_obj" | jq -r '.existing_serial')
         local text_serial=$(echo "$light_obj" | jq -r '.text_serial')
         local light_name=$(echo "$light_obj" | jq -r '.name')
-        
+
         if [[ -z "$existing_serial" && -n "$text_serial" ]]; then
-            echo "   -> Match for '$light_name' found. Populating serial: $text_serial"
+            echo "    -> Match for '$light_name' found. Populating serial: $text_serial"
         fi
     done < <(echo "$intermediate_array" | jq -c '.[]')
 
@@ -576,7 +575,7 @@ generate_serials_file() {
     echo
     echo "✅ Successfully created/updated '$serials_file'."
     echo "Please open the file and manually add the serial numbers for each light."
-    
+
     echo
     local summary_data=$(echo "$combined_array" | jq 'group_by(.bridgeName) | map({bridge: .[0].bridgeName, count: length})')
     local total_count
@@ -586,19 +585,22 @@ generate_serials_file() {
     echo "$summary_data" | jq -r '.[] | "  - \(.bridge): \(.count) lights found."'
     echo "---------------------------"
     echo "  Total: $total_count lights across all bridges."
-    
-    print_console_summaries "$combined_array" "$final_json"
+
+    print_console_summaries "$combined_array" "$final_json" "[]" "$LOW_BATTERY_THRESHOLD"
 }
 
-# Function to print console summaries for unreachable lights and missing serials
+# Function to print console summaries for various issues
 print_console_summaries() {
     local all_lights_json="$1"
     local serials_json_content="$2"
+    local all_sensors_json="$3"
+    local threshold="$4"
 
     # 1. Missing Serial Numbers Console Report
     local missing_serials_console
-    missing_serials_console=$(echo "$all_lights_json" | jq --argjson serials "$serials_json_content" -r '
-        map(select(($serials[.uniqueid].serialNumber // "") == ""))
+    missing_serials_console=$(printf '%s\n%s' "$all_lights_json" "$serials_json_content" | jq -s -r '
+        .[0] as $all_lights | .[1] as $serials |
+        $all_lights | map(select(($serials[.uniqueid].serialNumber // "") == ""))
         | group_by(.bridgeName)
         | if length > 0 then
             "--- Lights Missing Serial Numbers ---" +
@@ -606,9 +608,7 @@ print_console_summaries() {
                 "\n  \u001b[1m" + .[0].bridgeName + "\u001b[0m" + # Bold bridge name
                 (map("\n    - " + .name) | join(""))
             ) | join(""))
-        else
-            ""
-        end
+        else "" end
     ')
 
     # 2. Unreachable Lights Console Report
@@ -622,11 +622,25 @@ print_console_summaries() {
                 "\n  \u001b[1m" + .[0].bridgeName + "\u001b[0m" + # Bold bridge name
                 (map("\n    - " + .name) | join(""))
             ) | join(""))
-        else
-            ""
-        end
+        else "" end
     ')
-    
+
+    # 3. Low Battery Console Report
+    local low_battery_console=""
+    if [[ -n "$all_sensors_json" && "$all_sensors_json" != "[]" ]]; then
+        low_battery_console=$(echo "$all_sensors_json" | jq --arg threshold "$threshold" -r '
+            map(select(.config.battery != null and (.config.battery | tonumber) < ($threshold | tonumber)))
+            | group_by(.bridgeName)
+            | if length > 0 then
+                "--- Devices with battery lower than \($threshold)% ---" +
+                (map(
+                    "\n  \u001b[1m" + .[0].bridgeName + "\u001b[0m" + # Bold bridge name
+                    (map("\n    - " + .name + " (" + (.config.battery|tostring) + "%)") | join(""))
+                ) | join(""))
+            else "" end
+        ')
+    fi
+
     if [[ -n "$missing_serials_console" ]]; then
         echo
         echo -e "$missing_serials_console"
@@ -635,7 +649,12 @@ print_console_summaries() {
         echo
         echo -e "$unreachable_lights_console"
     fi
+    if [[ -n "$low_battery_console" ]]; then
+        echo
+        echo -e "$low_battery_console"
+    fi
 }
+
 
 # Cross-platform function to open a file with the default application.
 open_command() {
@@ -651,8 +670,10 @@ open_command() {
 # Function to process the data and generate a styled HTML report
 generate_report() {
     echo "Generating report..."
-    local report_date=$(date "+%A, %d %B %Y at %I:%M %p")
-    local timestamp=$(date "+%Y-%m-%d_%H-%M-%S")
+    local report_date
+    report_date=$(date "+%A, %d %B %Y at %I:%M %p")
+    local timestamp
+    timestamp=$(date "+%Y-%m-%d_%H-%M-%S")
     local safe_bridge_name
     safe_bridge_name=$(echo "$SELECTED_BRIDGE_NAME" | tr ' ' '.')
     local output_html="Hue.Report-${safe_bridge_name}-${timestamp}.html"
@@ -682,6 +703,12 @@ generate_report() {
     if [[ "$report_generation_successful" == "true" ]]; then
         all_lights_json=$(echo "$sorted_bridges_json" | jq '[.[] as $bridge | $bridge.lights | to_entries | .[] | .value + {light_id: .key, bridgeName: $bridge.bridge_name}] | sort_by(.bridgeName, .name)')
         if [[ $? -ne 0 ]]; then echo "Error: jq failed while creating flat list of all lights." >&2; report_generation_successful=false; fi
+    fi
+
+    local all_sensors_json
+    if [[ "$report_generation_successful" == "true" ]]; then
+        all_sensors_json=$(echo "$sorted_bridges_json" | jq '[.[] as $bridge | $bridge.sensors | to_entries | .[] | .value + {sensor_id: .key, bridgeName: $bridge.bridge_name}] | sort_by(.bridgeName, .name)')
+        if [[ $? -ne 0 ]]; then echo "Error: jq failed while creating flat list of all sensors." >&2; report_generation_successful=false; fi
     fi
 
     # Create Report Header and CSS styles
@@ -731,6 +758,7 @@ generate_report() {
         .color-block-container { display: inline-block; vertical-align: middle; width: 60px; height: 20px; border: 1px solid #aaa; border-radius: 4px; margin-left: 0; background-color: #f0f0f0; }
         .color-block { width: 100%; height: 100%; border-radius: 3px; }
         .unreachable { color: #d9534f; font-weight: bold; }
+        .low-battery { color: #d9534f; font-weight: bold; }
         .reachable { color: #5cb85c; font-weight: bold; }
         .on { font-weight: bold; }
         .off { color: #777; }
@@ -805,6 +833,7 @@ EOF
     fi
 
     if [[ "$report_generation_successful" == "true" ]]; then
+        local missing_serials_exist=false
         if [[ $(printf '%s\n%s' "$all_lights_json" "$serials_json_content" | jq -s '
             .[0] as $all_lights | .[1] as $serials |
             $all_lights | map(select(($serials[.uniqueid].serialNumber // "") == "")) | length
@@ -817,7 +846,12 @@ EOF
             unreachable_exist=true
         fi
 
-        if [[ "$missing_serials_exist" = true || "$unreachable_exist" = true ]]; then
+        local low_battery_exist=false
+        if [[ $(echo "$all_sensors_json" | jq --arg threshold "$LOW_BATTERY_THRESHOLD" '[.[] | select(.config.battery != null and (.config.battery | tonumber) < ($threshold | tonumber))] | length') -gt 0 ]]; then
+            low_battery_exist=true
+        fi
+
+        if [[ "$missing_serials_exist" = true || "$unreachable_exist" = true || "$low_battery_exist" = true ]]; then
             toc_html+="<h3 class=\"bridge-group-title\">Summaries</h3><ul>"
             if [[ "$missing_serials_exist" = true ]]; then
                 toc_html+="<li><a href=\"#summary-missing-serials\">Lights with Missing Serial Numbers</a></li>"
@@ -825,9 +859,12 @@ EOF
             if [[ "$unreachable_exist" = true ]]; then
                 toc_html+="<li><a href=\"#summary-unreachable\">Unreachable Lights</a></li>"
             fi
+            if [[ "$low_battery_exist" = true ]]; then
+                toc_html+="<li><a href=\"#summary-low-battery\">Devices with Low Battery</a></li>"
+            fi
             toc_html+="</ul>"
         fi
-        
+
         # Add Appendix to ToC
         toc_html+="<h3 class=\"bridge-group-title\">Reference</h3><ul>"
         toc_html+="<li><a href=\"#appendix-buttonevent\">Button Code Appendix</a></li>"
@@ -869,7 +906,7 @@ EOF
                 "<div class=\"marker-container\"><div class=\"marker\" style=\"left: \($percent|tostring)%;\"></div></div>" +
                 "</div>"
             else "" end;
-        
+
         def hue_infographic:
             if .hue != null then
                 (((.hue // 0) | tonumber) / 65535 * 100) as $percent |
@@ -898,7 +935,7 @@ EOF
                 "<div class=\"marker-container\"><div class=\"marker\" style=\"left: \($percent|tostring)%;\"></div></div>" +
                 "</div>"
             else "" end;
-        
+
         def xy_to_rgb_string:
             .xy[0] as $x | .xy[1] as $y | (((.bri // 127) | tonumber)/254) as $Y |
             (if $y == 0 then 0 else ($Y / $y) * $x end) as $X |
@@ -974,7 +1011,7 @@ EOF
         while read -r bridge_obj; do
             local bridge_name
             bridge_name=$(echo "$bridge_obj" | jq -r '.bridge_name')
-            echo "     - Processing Bridge: '$bridge_name'"
+            echo "      - Processing Bridge: '$bridge_name'"
 
             bridge_info_html=$(echo "$bridge_obj" | jq -r '
                 . as $bridge |
@@ -994,7 +1031,7 @@ EOF
             echo "$bridge_info_html" >> "$output_html"
 
             group_names_for_logging=$(echo "$bridge_obj" | jq -r '
-                (.groups | to_entries | map(.value.name) | sort | .[]) as $group_name | "         - Processing Group: '\''\($group_name)'\''"
+                (.groups | to_entries | map(.value.name) | sort | .[]) as $group_name | "            - Processing Group: '\''\($group_name)'\''"
             ')
             if [[ $? -ne 0 ]]; then echo "Error: jq failed while logging group names for $bridge_name" >&2; report_generation_successful=false; break; fi
 
@@ -1009,7 +1046,7 @@ EOF
             if [[ $? -ne 0 ]]; then echo "Error: jq failed while checking for unassigned lights in $bridge_name" >&2; report_generation_successful=false; break; fi
 
             if [[ "$has_unassigned" == "true" ]]; then
-                echo "         - Processing Group: 'Unassigned'"
+                echo "            - Processing Group: 'Unassigned'"
             fi
 
             all_groups_and_lights_html=$(printf '%s\n%s' "$bridge_obj" "$serials_json_content" | jq -s -r "$jq_functions"'
@@ -1093,7 +1130,7 @@ EOF
             if [[ $? -ne 0 ]]; then echo "Error: jq failed processing lights/groups for $bridge_name" >&2; report_generation_successful=false; break; fi
             echo "$all_groups_and_lights_html" >> "$output_html"
 
-            sensors_html=$(echo "$bridge_obj" | jq -r '
+            sensors_html=$(echo "$bridge_obj" | jq --arg threshold "$LOW_BATTERY_THRESHOLD" -r '
                 . as $bridge |
                 ($bridge.bridge_name | gsub("[^a-zA-Z0-9_-]"; "-")) as $safe_bridge_name |
                 if ($bridge.sensors | length) > 0 then
@@ -1110,7 +1147,13 @@ EOF
                             "<p class=\"detail-row\"><span class=\"label\">Manufacturer:</span> " + ($sensor.value.manufacturername // "N/A") + "</p>" +
                             "<p class=\"detail-row\"><span class=\"label\">On/Off Status:</span> " + (($sensor.value.config.on | tostring) // "N/A") + "</p>" +
                             "<p class=\"detail-row\"><span class=\"label\">Reachable:</span> " + (($sensor.value.config.reachable | tostring) // "N/A") + "</p>" +
-                            (if $sensor.value.config.battery != null then "<p class=\"detail-row\"><span class=\"label\">Battery:</span> " + ($sensor.value.config.battery|tostring) + "%</p>" else "" end) +
+                            (if $sensor.value.config.battery != null then
+                                (if ($sensor.value.config.battery | tonumber) < ($threshold | tonumber) then
+                                    "<p class=\"detail-row\"><span class=\"label\">Battery:</span> <span class=\"low-battery\">" + ($sensor.value.config.battery|tostring) + "%</span></p>"
+                                else
+                                    "<p class=\"detail-row\"><span class=\"label\">Battery:</span> " + ($sensor.value.config.battery|tostring) + "%</p>"
+                                end)
+                            else "" end) +
                             "<p class=\"detail-row section-header\">Current State</p>" +
                             ($sensor.value.state | to_entries | map("<p class=\"detail-row\"><span class=\"label\">" + .key + ":</span> " + (.value|tostring) + "</p>") | join("")) +
                             "<p class=\"detail-row\"><span class=\"label\">API URL:</span> <a href=\"http://" + $bridge.bridge_ip + "/api/" + $bridge.bridge_user + "/sensors/" + $sensor.key + "\" target=\"_blank\">http://" + $bridge.bridge_ip + "/api/.../sensors/" + $sensor.key + "</a></p>" +
@@ -1433,7 +1476,7 @@ EOF
             else "" end
         ')
         if [[ $? -ne 0 ]]; then echo "Error: jq failed processing missing serials summary." >&2; report_generation_successful=false; fi
-        
+
         if [[ "$report_generation_successful" == "true" ]]; then
             unreachable_lights_summary=$(echo "$all_lights_json" | jq -r '
                 map(select(.state.reachable == false))
@@ -1446,12 +1489,35 @@ EOF
             if [[ $? -ne 0 ]]; then echo "Error: jq failed processing unreachable lights summary." >&2; report_generation_successful=false; fi
         fi
 
+        low_battery_summary=$(echo "$all_sensors_json" | jq --arg threshold "$LOW_BATTERY_THRESHOLD" -r '
+            map(select(.config.battery != null and (.config.battery | tonumber) < ($threshold | tonumber)))
+            | sort_by(.name)
+            | group_by(.bridgeName)
+            | if length > 0 then
+                "<h2 class=\"summary-title\" id=\"summary-low-battery\">Devices with Low Battery (&lt;\($threshold)%)</h2>" +
+                (map(
+                    "<h3 class=\"bridge-group-title\">" + .[0].bridgeName + "</h3>" +
+                    "<ul>" +
+                    (map(
+                        . as $sensor |
+                        ($sensor.bridgeName | gsub("[^a-zA-Z0-9_-]"; "-")) as $safe_bridge_name |
+                        "<li><a href=\"#" + $safe_bridge_name + "-sensor-" + $sensor.sensor_id + "\">" + $sensor.name + "</a> (" + ($sensor.config.battery|tostring) + "%)</li>"
+                    ) | join("")) +
+                    "</ul>"
+                ) | join(""))
+            else "" end
+        ')
+        if [[ $? -ne 0 ]]; then echo "Error: jq failed processing low battery summary." >&2; report_generation_successful=false; fi
+
         if [[ "$report_generation_successful" == "true" ]]; then
             if [[ -n "$missing_serials_summary" ]]; then
                 echo "$missing_serials_summary" >> "$output_html"
             fi
             if [[ -n "$unreachable_lights_summary" ]]; then
                 echo "$unreachable_lights_summary" >> "$output_html"
+            fi
+            if [[ -n "$low_battery_summary" ]]; then
+                echo "$low_battery_summary" >> "$output_html"
             fi
         fi
     fi
@@ -1526,19 +1592,19 @@ EOF
 
         # --- SAVE THE RAW JSON DATA ---
         echo "$sorted_bridges_json" | jq '.' > "$output_json"
-        
+
         echo
         echo "✅ Report generation complete!"
         echo "HTML saved as: '$output_html'"
         echo "Raw JSON data saved as: '$output_json'"
-        
+
         # Report on the number of lights found
         echo
         echo "--- Light Count Summary ---"
         total_count=$(echo "$all_lights_json" | jq 'length')
         summary_data=$(echo "$all_lights_json" | jq 'group_by(.bridgeName) | map({bridge: .[0].bridgeName, count: length})')
         echo "$summary_data" | jq -r '.[] | "  - \(.bridge): \(.count) lights found."'
-        
+
         group_summary=$(echo "$API_RESPONSE" | jq -r '
             .[] |
             "    \u001b[1m" + .bridge_name + " Groups:\u001b[0m" +
@@ -1548,13 +1614,13 @@ EOF
             )
         ')
         echo -e "$group_summary"
-        
+
         echo "---------------------------"
         echo "  Total: $total_count lights across all bridges."
-        
-        
+
+
         # --- Console Summaries ---
-        print_console_summaries "$all_lights_json" "$serials_json_content"
+        print_console_summaries "$all_lights_json" "$serials_json_content" "$all_sensors_json" "$LOW_BATTERY_THRESHOLD"
 
 
         # Ask to open the file
@@ -1565,8 +1631,8 @@ EOF
     else
         echo
         echo "❗️ Report generation failed due to one or more errors." >&2
-        echo "     Please check the error messages above for details." >&2
-        echo "     Cleaning up incomplete report files..." >&2
+        echo "      Please check the error messages above for details." >&2
+        echo "      Cleaning up incomplete report files..." >&2
         rm -f "$output_html" "$output_json"
     fi
 }

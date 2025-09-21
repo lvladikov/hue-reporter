@@ -9,6 +9,7 @@ This cross-platform script connects to one or more Philips Hue Bridges, fetches 
 ## Features
 
 - **Comprehensive Reporting:** Generates a detailed HTML report of all Hue assets, including lights, switches, sensors, and more.
+- **Battery Level Reporting:** Reports battery levels for all applicable devices in both the HTML report and the console output, helping you to keep track of devices that need new batteries.
 - **Rich Visualizations:** The HTML report generates rich, dynamic infographics to visually represent brightness, saturation, hue, and color temperature. For Entertainment groups, it creates a 3D representation of the light positions, helping to visualize their spatial arrangement.
 - **Raw Data Export:** Creates a `Hue.Report-<BridgeName>-<Timestamp>.json` file containing the complete, unprocessed data from the Hue Bridge(s) for advanced analysis.
 - **Multi-Bridge Support:** Connects to multiple Hue Bridges simultaneously, fetching data in parallel to minimize execution time.
