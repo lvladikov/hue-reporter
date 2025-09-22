@@ -2128,9 +2128,10 @@ fetch_all_monitor_data() {
         fi
         rm "$tmp_file"
     done
-    # Return a single JSON object containing both lists
-    jq -n --argjson lights "$combined_lights" --argjson sensors "$combined_sensors" '{lights: $lights, sensors: $sensors}'
+    # Combine and return a single JSON object using stdin to avoid argument length limits
+    printf '%s\n' "$combined_lights" "$combined_sensors" | jq -s '.[0] as $lights | .[1] as $sensors | {lights: $lights, sensors: $sensors}'
 }
+
 # Formats a duration in seconds into a human-readable string with full precision.
 format_duration() {
     local total_seconds=$1
@@ -2191,13 +2192,13 @@ run_realtime_monitor() {
     initial_sensors_json=$(echo "$initial_monitor_data" | jq '.sensors')
 
     local previous_light_states
-    previous_light_states=$(echo "$initial_lights_json" | jq 'map({key: .uniqueid, value: .state.on}) | from_entries')
+    previous_light_states=$(echo "$initial_lights_json" | jq -c 'map({key: .uniqueid, value: .state.on}) | from_entries')
     if [[ -z "$previous_light_states" || "$previous_light_states" == "{}" ]]; then
         echo "Error: Could not fetch initial light states. Cannot start monitor." >&2
         return
     fi
     local previous_motion_states
-    previous_motion_states=$(echo "$initial_sensors_json" | jq 'map(select(.state.presence != null) | {key: .uniqueid, value: .state.presence}) | from_entries')
+    previous_motion_states=$(echo "$initial_sensors_json" | jq -c 'map(select(.state.presence != null) | {key: .uniqueid, value: .state.presence}) | from_entries')
 
     while true; do
         clear
@@ -2209,25 +2210,29 @@ run_realtime_monitor() {
         monitor_data=$(fetch_all_monitor_data)
         
         # --- Process All Data in a Single JQ Command ---
+        local lights_json
+        lights_json=$(echo "$monitor_data" | jq -c '.lights')
+        local sensors_json
+        sensors_json=$(echo "$monitor_data" | jq -c '.sensors')
+
         local processed_data
-        processed_data=$(jq -n \
-            --argjson lights "$(echo "$monitor_data" | jq '.lights')" \
-            --argjson sensors "$(echo "$monitor_data" | jq '.sensors')" \
-            --argjson previous_lights "$previous_light_states" \
-            --argjson previous_motion "$previous_motion_states" \
+        processed_data=$(printf '%s\n' "$lights_json" "$sensors_json" "$previous_light_states" "$previous_motion_states" | jq -s \
             --argjson threshold "$LOW_BATTERY_THRESHOLD" \
             '
+            # Assign slurped data to variables for clarity
+            .[0] as $lights |
+            .[1] as $sensors |
+            .[2] as $previous_lights |
+            .[3] as $previous_motion |
+
             # --- Reusable Functions ---
             def rpad(len; s):
               (len - (s | length)) as $padding |
               s + (if $padding <= 0 then "" else "                                                  "[:$padding] end);
 
             # --- Pre-computation ---
-            # Create a map for sensor display names
             ($sensors | (reduce (.[] | select(.type == "ZLLPresence")) as $sensor ({}; . + {($sensor.uniqueid | sub("-[0-9a-fA-F]{2}-[0-9a-fA-F]{4}$"; "")): $sensor.name}))
             ) as $name_map |
-
-            # Create current state maps for comparison
             ($lights | map({key: .uniqueid, value: {name: .name, on: .state.on}}) | from_entries) as $current_lights |
             ($sensors | map(select(.state.presence != null)) | 
                 map(
@@ -2345,8 +2350,8 @@ run_realtime_monitor() {
         echo -e "$monitor_output"
 
         # --- Update State for Next Loop ---
-        previous_light_states=$(echo "$processed_data" | jq '.next_light_states')
-        previous_motion_states=$(echo "$processed_data" | jq '.next_motion_states')
+        previous_light_states=$(echo "$processed_data" | jq -c '.next_light_states')
+        previous_motion_states=$(echo "$processed_data" | jq -c '.next_motion_states')
 
         # --- Wait and Handle Input ---
         echo "-----------------------------------------------------------"
