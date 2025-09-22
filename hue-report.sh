@@ -34,6 +34,9 @@
 #   -u, --unreachable    List all unreachable devices.
 #   -d, --list-devices   Display a summary of all bridges, rooms, and lights.
 #   -t, --temperature    Display temperature readings from motion sensors.
+#   -m, --realtime-mode  Launch a console monitor that refreshes in real-time.
+#                        It tracks newly activated lights, motion detection,
+#                        temperatures, and alerts for unreachable or low-battery devices.
 #   -h, --help           Display this help message.
 #
 #   OUTPUT FORMATS (Optional):
@@ -52,6 +55,8 @@
 #       - With `--json`: Creates a simple raw JSON file.
 #       - With `--html`: Creates a simple HTML report file.
 #       - With `--json --html`: Creates BOTH the JSON and HTML files.
+#   - `--realtime-mode`: Launches the interactive console monitor. This mode
+#     is console-only and does not support any output format flags.
 #
 # ==============================================================================
 # REQUIREMENTS
@@ -219,6 +224,7 @@
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 CONFIG_FILE="$SCRIPT_DIR/hue_bridges_conf.json"
 LOW_BATTERY_THRESHOLD=10 # Set the warning threshold for battery percentage
+MONITOR_REFRESH_INTERVAL=60 # Real-time monitor (when sued) refresh interval in seconds
 
 # Global variable to hold the loaded bridge configuration
 BRIDGES_JSON=""
@@ -2069,6 +2075,310 @@ EOF
     fi
 }
 
+# Efficiently fetch lights and sensors data for the real-time monitor
+fetch_all_monitor_data() {
+    local core_count=$(get_core_count)
+    local pids=()
+    local tmp_files=()
+    local job_count=0
+
+    # Read all bridges from the main config JSON
+    while read -r bridge_obj; do
+        if [[ $job_count -ge $core_count ]]; then
+            wait -n
+            ((job_count--))
+        fi
+
+        local current_ip=$(echo "$bridge_obj" | jq -r '.ip')
+        local current_user=$(echo "$bridge_obj" | jq -r '.user')
+        local tmp_file=$(mktemp)
+        tmp_files+=("$tmp_file")
+
+        (
+            local full_url="http://${current_ip}/api/${current_user}"
+            local response
+            response=$(curl --connect-timeout 5 -s "$full_url")
+
+            # If the response is valid, extract lights, sensors, and bridge name
+            if [[ -n "$response" && "$response" != *"unauthorized user"* ]]; then
+                echo "$response" | jq '{lights: .lights, sensors: .sensors, bridgeName: .config.name}' > "$tmp_file"
+            fi
+        ) &
+        pids+=($!)
+        ((job_count++))
+    done < <(echo "$BRIDGES_JSON" | jq -c '.[]')
+
+    wait "${pids[@]}"
+
+    # Process the results from all bridges into a single object {lights: [...], sensors: [...]}
+    local combined_lights="[]"
+    local combined_sensors="[]"
+    for tmp_file in "${tmp_files[@]}"; do
+        if [[ -s "$tmp_file" ]]; then
+            local bridge_data
+            bridge_data=$(cat "$tmp_file")
+            # Extract and flatten lights
+            local partial_lights
+            partial_lights=$(echo "$bridge_data" | jq '. as $d | .lights | to_entries | map(.value + {id: .key, bridgeName: $d.bridgeName})')
+            combined_lights=$(printf '%s\n%s' "$combined_lights" "$partial_lights" | jq -s '.[0] + .[1]')
+            # Extract and flatten sensors
+            local partial_sensors
+            partial_sensors=$(echo "$bridge_data" | jq '. as $d | .sensors | to_entries | map(.value + {id: .key, bridgeName: $d.bridgeName})')
+            combined_sensors=$(printf '%s\n%s' "$combined_sensors" "$partial_sensors" | jq -s '.[0] + .[1]')
+        fi
+        rm "$tmp_file"
+    done
+    # Return a single JSON object containing both lists
+    jq -n --argjson lights "$combined_lights" --argjson sensors "$combined_sensors" '{lights: $lights, sensors: $sensors}'
+}
+# Formats a duration in seconds into a human-readable string with full precision.
+format_duration() {
+    local total_seconds=$1
+    if (( total_seconds < 1 )); then
+        echo "0s"
+        return
+    fi
+
+    local days=$((total_seconds / 86400))
+    local remainder=$((total_seconds % 86400))
+    local hours=$((remainder / 3600))
+    remainder=$((remainder % 3600))
+    local minutes=$((remainder / 60))
+    local seconds=$((remainder % 60))
+
+    local parts=()
+    if (( days > 0 )); then
+        if (( days == 1 )); then parts+=("1 day"); else parts+=("$days days"); fi
+    fi
+    if (( hours > 0 )); then
+        if (( hours == 1 )); then parts+=("1 hour"); else parts+=("$hours hours"); fi
+    fi
+    if (( minutes > 0 )); then
+        if (( minutes == 1 )); then parts+=("1 minute"); else parts+=("$minutes minutes"); fi
+    fi
+    if (( seconds > 0 )); then
+        # Use 's' for seconds only if it's the only unit
+        if (( ${#parts[@]} == 0 )); then
+            parts+=("${seconds}s")
+        elif (( seconds == 1 )); then 
+            parts+=("1 second")
+        else
+            parts+=("$seconds seconds")
+        fi
+    fi
+
+    local final_string=""
+    for part in "${parts[@]}"; do
+        final_string+="$part "
+    done
+    # Trim trailing space
+    echo "${final_string% }"
+}
+# Function for the real-time console monitor
+run_realtime_monitor() {
+    # Trap Ctrl+C for a clean exit
+    trap 'echo -e "\n\nExiting monitor."; exit 0' INT
+    
+    local formatted_interval
+    formatted_interval=$(format_duration "$MONITOR_REFRESH_INTERVAL")
+
+    echo "Fetching initial device states..."
+    local initial_monitor_data
+    initial_monitor_data=$(fetch_all_monitor_data)
+    local initial_lights_json
+    initial_lights_json=$(echo "$initial_monitor_data" | jq '.lights')
+    local initial_sensors_json
+    initial_sensors_json=$(echo "$initial_monitor_data" | jq '.sensors')
+
+    local previous_light_states
+    previous_light_states=$(echo "$initial_lights_json" | jq 'map({key: .uniqueid, value: .state.on}) | from_entries')
+    if [[ -z "$previous_light_states" || "$previous_light_states" == "{}" ]]; then
+        echo "Error: Could not fetch initial light states. Cannot start monitor." >&2
+        return
+    fi
+    local previous_motion_states
+    previous_motion_states=$(echo "$initial_sensors_json" | jq 'map(select(.state.presence != null) | {key: .uniqueid, value: .state.presence}) | from_entries')
+
+    while true; do
+        clear
+        local update_time
+        update_time=$(date "+%H:%M:%S")
+
+        # Use the single, efficient fetch function each cycle
+        local monitor_data
+        monitor_data=$(fetch_all_monitor_data)
+        
+        # --- Process All Data in a Single JQ Command ---
+        local processed_data
+        processed_data=$(jq -n \
+            --argjson lights "$(echo "$monitor_data" | jq '.lights')" \
+            --argjson sensors "$(echo "$monitor_data" | jq '.sensors')" \
+            --argjson previous_lights "$previous_light_states" \
+            --argjson previous_motion "$previous_motion_states" \
+            --argjson threshold "$LOW_BATTERY_THRESHOLD" \
+            '
+            # --- Reusable Functions ---
+            def rpad(len; s):
+              (len - (s | length)) as $padding |
+              s + (if $padding <= 0 then "" else "                                                  "[:$padding] end);
+
+            # --- Pre-computation ---
+            # Create a map for sensor display names
+            ($sensors | (reduce (.[] | select(.type == "ZLLPresence")) as $sensor ({}; . + {($sensor.uniqueid | sub("-[0-9a-fA-F]{2}-[0-9a-fA-F]{4}$"; "")): $sensor.name}))
+            ) as $name_map |
+
+            # Create current state maps for comparison
+            ($lights | map({key: .uniqueid, value: {name: .name, on: .state.on}}) | from_entries) as $current_lights |
+            ($sensors | map(select(.state.presence != null)) | 
+                map(
+                    (.uniqueid | sub("-[0-9a-fA-F]{2}-[0-9a-fA-F]{4}$"; "")) as $base_id |
+                    { key: .uniqueid, value: { displayName: ($name_map[$base_id] // .name), presence: .state.presence } }
+                ) | from_entries
+            ) as $current_motion |
+
+            # --- Section 1: Newly Activated Lights ---
+            (
+                ($current_lights | keys_unsorted) as $all_keys |
+                $all_keys | map(
+                    select(($current_lights[.].on == true) and (($previous_lights[.] // false) == false))
+                    | "  - \($current_lights[.].name)"
+                ) | sort
+            ) as $newly_on_lights |
+
+            # --- Section 2: Newly Detected Motion ---
+            (
+                ($current_motion | keys_unsorted) as $all_keys |
+                $all_keys | map(
+                    select(($current_motion[.].presence == true) and (($previous_motion[.] // false) == false))
+                    | "  - \($current_motion[.].displayName)"
+                ) | sort
+            ) as $newly_detected_motion |
+
+            # --- Section 3: Temperatures ---
+            (
+                ($sensors | map(select(.state.temperature != null)) |
+                    map(
+                        (.uniqueid | sub("-[0-9a-fA-F]{2}-[0-9a-fA-F]{4}$"; "")) as $base_id |
+                        . + {
+                            displayName: ($name_map[$base_id] // .name),
+                            celsius: (.state.temperature / 100),
+                            fahrenheit: (((.state.temperature / 100 * 1.8 + 32) * 100 | round) / 100)
+                        }
+                    ) | sort_by(.displayName)
+                ) as $temp_items |
+                ($temp_items | map(.displayName | length) | max // 0) as $max_len |
+                $temp_items | map("  - \(rpad($max_len; .displayName))  : \(.celsius)°C / \(.fahrenheit)°F")
+            ) as $temperatures |
+
+            # --- Section 4.1: Unreachable ---
+            (
+                $lights | map(select(.state.reachable == false)) | sort_by(.name) | map("  - \(.name)")
+            ) as $unreachable_devices |
+            
+            # --- Section 4.2: Low Battery ---
+            (
+                ($sensors | map(select(.config.battery != null and (.config.battery | tonumber) < ($threshold | tonumber))) |
+                    map(
+                        (.uniqueid | sub("-[0-9a-fA-F]{2}-[0-9a-fA-F]{4}$"; "")) as $base_id |
+                        . + { displayName: ($name_map[$base_id] // .name) }
+                    ) | group_by(.displayName) | map(.[0]) | sort_by(.displayName)
+                ) as $batt_items |
+                ($batt_items | map(.displayName | length) | max // 0) as $max_len |
+                $batt_items | map("  - \(rpad($max_len; .displayName))  (\(.config.battery)%)")
+            ) as $low_battery_devices |
+
+            # --- Final Assembly ---
+            {
+                newly_on_lights: $newly_on_lights,
+                newly_detected_motion: $newly_detected_motion,
+                temperatures: $temperatures,
+                unreachable_devices: $unreachable_devices,
+                low_battery_devices: $low_battery_devices,
+                next_light_states: ($current_lights | map_values(.on)),
+                next_motion_states: ($current_motion | map_values(.presence))
+            }
+            '
+        )
+
+        # --- Extract Processed Data for Display ---
+        local newly_on_lights
+        newly_on_lights=$(echo "$processed_data" | jq -r '.newly_on_lights[]')
+        local newly_detected_motion
+        newly_detected_motion=$(echo "$processed_data" | jq -r '.newly_detected_motion[]')
+        local temperatures
+        temperatures=$(echo "$processed_data" | jq -r '.temperatures[]')
+        local unreachable_devices
+        unreachable_devices=$(echo "$processed_data" | jq -r '.unreachable_devices[]')
+        local low_battery_devices
+        low_battery_devices=$(echo "$processed_data" | jq -r '.low_battery_devices[]')
+
+        # --- Display Output ---
+        local monitor_output=""
+        monitor_output+="--- Hue Real-time Monitor (Last updated: $update_time) ---\n\n"
+        monitor_output+="\x1b[1;32m💡 RECENTLY ACTIVATED (in last ${formatted_interval})\x1b[0m\n"
+        if [[ -n "$newly_on_lights" ]]; then monitor_output+="$newly_on_lights\n"; else monitor_output+="  No new lights turned on.\n"; fi
+        monitor_output+="\n"
+        monitor_output+="\x1b[1;33m🏃 MOTION DETECTED (in last ${formatted_interval})\x1b[0m\n"
+        if [[ -n "$newly_detected_motion" ]]; then monitor_output+="$newly_detected_motion\n"; else monitor_output+="  No new motion detected.\n"; fi
+        monitor_output+="\n"
+        monitor_output+="\x1b[1;34m🔥 TEMPERATURES\x1b[0m\n"
+        if [[ -n "$temperatures" ]]; then monitor_output+="$temperatures\n"; else monitor_output+="  No temperature sensors found.\n"; fi
+        monitor_output+="\n"
+        monitor_output+="\x1b[1;31m⚠️ ALERTS\x1b[0m\n"
+        
+        local alerts_found=false
+        if [[ -n "$unreachable_devices" ]]; then
+            alerts_found=true
+            monitor_output+="  \x1b[4mUnreachable\x1b[0m\n"
+            monitor_output+="$unreachable_devices\n"
+        fi
+        if [[ -n "$low_battery_devices" ]]; then
+            alerts_found=true
+            if [[ -n "$unreachable_devices" ]]; then monitor_output+="\n"; fi
+            monitor_output+="  \x1b[4mLow Battery (<$LOW_BATTERY_THRESHOLD%)\x1b[0m\n"
+            monitor_output+="$low_battery_devices\n"
+        fi
+        if [[ "$alerts_found" == "false" ]]; then
+            monitor_output+="  All systems nominal. No alerts.\n"
+        fi
+
+        echo -e "$monitor_output"
+
+        # --- Update State for Next Loop ---
+        previous_light_states=$(echo "$processed_data" | jq '.next_light_states')
+        previous_motion_states=$(echo "$processed_data" | jq '.next_motion_states')
+
+        # --- Wait and Handle Input ---
+        echo "-----------------------------------------------------------"
+        echo "Press [X] to Exit | [M] for Main Menu | [R] Refresh Now"
+        local user_input=""
+        local terminal_width
+        terminal_width=$(tput cols 2>/dev/null || echo 80)
+        for (( i=$MONITOR_REFRESH_INTERVAL; i>0; i-- )); do
+            local formatted_countdown
+            formatted_countdown=$(format_duration "$i")
+            local clear_line
+            clear_line=$(printf '%*s' "$terminal_width")
+            printf "\r%s" "$clear_line"
+            printf "\rNext refresh in %s... " "$formatted_countdown"
+            read -s -n 1 -t 1 user_input
+            if [[ -n "$user_input" ]]; then break; fi
+        done
+        printf "\r                                       \r"
+
+        if [[ "$user_input" == "x" || "$user_input" == "X" ]]; then
+            echo "Exiting monitor."
+            break
+        elif [[ "$user_input" == "m" || "$user_input" == "M" ]]; then
+            clear
+            main_menu
+            break
+        elif [[ "$user_input" == "r" || "$user_input" == "R" ]]; then
+            continue
+        fi
+    done
+    trap - INT
+}
 
 # --- Main Script User Interface ---
 
@@ -2083,6 +2393,7 @@ show_usage() {
     echo "  -u, --unreachable    List all unreachable lights."
     echo "  -d, --list-devices   List all bridges, rooms/zones, and lights."
     echo "  -t, --temperature    Display temperature readings from motion sensors."
+    echo "  -m, --realtime-mode  Launch a real-time console monitor."
     echo "  -h, --help           Show this help message."
     echo
     echo "Options:"
@@ -2102,9 +2413,10 @@ main_menu() {
     echo "  4. List Unreachable Devices (-u)"
     echo "  5. List All Devices (Bridges, Rooms, Lights) (-d)"
     echo "  6. Check Sensor Temperatures (-t)"
-    echo "  7. Exit"
+    echo "  7. Real-time Console Monitor (-m)"
+    echo "  8. Exit"
     local menu_choice
-    read -p "Enter number (1-7) [default: 1]: " menu_choice
+    read -p "Enter number (1-8) [default: 1]: " menu_choice
 
     # Default to 1 if the user just presses Enter
     if [[ -z "$menu_choice" ]]; then
@@ -2134,6 +2446,9 @@ main_menu() {
             run_summary_task "TemperatureCheck" false false
             ;;
         7)
+            run_realtime_monitor
+            ;;
+        8)
             echo "Exiting."
             exit 0
             ;;
@@ -2189,6 +2504,10 @@ main() {
                 if [[ -n "$main_command" ]]; then echo "Error: Only one main command can be specified." >&2; exit 1; fi
                 main_command="--temperature"
                 ;;
+            -m|--realtime-mode)
+                if [[ -n "$main_command" ]]; then echo "Error: Only one main command can be specified." >&2; exit 1; fi
+                main_command="--realtime-mode"
+                ;;
             --json)
                 output_json=true
                 ;;
@@ -2239,6 +2558,13 @@ main() {
         --temperature)
             run_summary_task "TemperatureCheck" "$output_json" "$output_html"
             ;;
+        --realtime-mode)
+            if [[ "$output_json" == "true" || "$output_html" == "true" ]]; then
+                echo "Error: --realtime-mode does not support --json or --html flags." >&2
+                exit 1
+            fi
+            run_realtime_monitor
+            ;;
         *)
             echo "Error: No valid command provided." >&2
             show_usage
@@ -2251,4 +2577,3 @@ main() {
 main "$@"
 
 exit 0
-

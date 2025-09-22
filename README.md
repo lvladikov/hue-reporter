@@ -13,10 +13,11 @@ It can be run with an interactive menu or via command-line arguments for automat
 - **Comprehensive Reporting:** Generates a detailed HTML report of all Hue assets, including lights, groups, sensors, rules, and schedules.
 - **Integrated Summaries:** The main HTML report includes summaries for low-battery devices, unreachable lights, and sensor temperatures for a quick overview.
 - **Interactive HTML Report:** The generated report includes an interactive table of contents and summary links that allow you to jump directly to detailed sections.
-- **Command-Line Interface:** Run tasks directly from the command line (e.g., `-b`, `--battery-check`, `-r`, `--report`) to bypass the menu, ideal for automation and scheduled tasks.
+- **Real-time Console Monitor:** Launch a console-based dashboard that periodically refreshes to show recent changes, including newly activated lights, motion detection (this is still **_experimental_**), temperatures, and alerts for unreachable or low-battery devices.
+- **Command-Line Interface:** Run tasks directly from the command line (e.g., `-b`, `-r`, `-m`) to bypass the menu, ideal for automation and scheduled tasks.
 - **Flexible Output Formats:** Generate full HTML reports, simple summary HTML files, or raw JSON data files for easy integration with other tools.
 - **Battery Level Reporting:** Quickly identify devices with low batteries, with intelligent de-duplication for motion sensors.
-- **Temperature Reporting:** View the current temperature from all compatible motion sensors in Celsius and Fahrenheit, complete with the timestamp of the last reading.
+- **Temperature Reporting:** View the current temperature from all compatible motion sensors in Celsius and Fahrenheit.
 - **Unreachable Device Reporting:** Get a list of all devices that are currently unreachable.
 - **Rich Visualizations:** The HTML report generates dynamic infographics to visually represent brightness, saturation, hue, and color temperature. For Entertainment groups, it creates a 3D representation of the light positions.
 - **Multi-Bridge Support:** Connects to multiple Hue Bridges simultaneously, fetching data in parallel to minimize execution time.
@@ -240,7 +241,6 @@ Note that you can run/call the script in a different folder from where your scri
 
     # Get a full list of all devices as a raw JSON file
     ./hue-report.sh -d --json
-
     ```
 
     **Serials Management**
@@ -251,23 +251,37 @@ Note that you can run/call the script in a different folder from where your scri
     ./hue-report.sh -s
     ```
 
+    **Real-time Monitoring**
+
+    ```bash
+    # Launch the real-time console monitor. Press 'X' to exit.
+    ./hue-report.sh -m
+
+    # or using the full command name
+    ./hue-report.sh --realtime-mode
+    ```
+
 ## Output
 
-The script generates files with dynamic names based on the selected bridge(s) and the current timestamp.
+The script generates files with dynamic names based on the task, selected bridge(s), and the current timestamp.
 
-- **HTML Report:** A detailed report providing a human-readable overview of all your Hue devices and their statuses.
+### Full Report Files (`--report`)
 
-  - **Filename format:** `Hue.Report-<BridgeName>-<Timestamp>.html`
-  - **Example (single bridge):** `Hue.Report-Living.Room-2025-09-20_14-30-00.html`
-  - **Example (all bridges):** `Hue.Report-All.Configured.Bridges-2025-09-20_14-30-00.html`
+These files contain a comprehensive report on all Hue assets.
 
-- **JSON Data Dump:** A file containing the raw, complete data fetched from the Hue Bridge API, useful for developers or other tools.
+- **HTML Format:** `Hue.Report-<BridgeName>-<Timestamp>.html`
+- **JSON Format:** `Hue.Report-<BridgeName>-<Timestamp>.json`
+- **Example (single bridge):** `Hue.Report-Living.Room-2025-09-22_16-05-00.html`
+- **Example (all bridges):** `Hue.Report-All.Configured.Bridges-2025-09-22_16-05-00.json`
 
-  - **Filename format:** `Hue.Report-<BridgeName>-<Timestamp>.json`
-  - **Example (single bridge):** `Hue.Report-Living.Room-2025-09-20_14-30-00.json`
-  - **Example (all bridges):** `Hue.Report-All.Configured.Bridges-2025-09-20_14-30-00.json`
+### Summary Task Files
 
-  Note that if a task was selected to run just battery check, or temperatures or unreachable devices, the JSON and HTML reports would only contain relevant minimal data for that task.
+These files are created by tasks like `--battery-check` or `--unreachable` and contain only the data relevant to that specific task. These tasks always run on all configured bridges.
+
+- **Format:** `Hue.<TaskName>-All.Bridges-<Timestamp>.<extension>`
+- **Example (Battery Check HTML):** `Hue.BatteryCheck-All.Bridges-2025-09-22_16-06-00.html`
+- **Example (Unreachable JSON):** `Hue.Unreachable-All.Bridges-2025-09-22_16-07-00.json`
+- **Example (Temperatures HTML):** `Hue.TemperatureCheck-All.Bridges-2025-09-22_16-08-00.html`
 
 ## License
 
