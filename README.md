@@ -51,6 +51,10 @@ The script generates a detailed HTML report. Here are examples of the informatio
 
   ![Example Temperature Report](report_example_temperatures.png)
 
+- **Dashboard**
+
+  ![Example Dashboard](report_example_dashboard.png)
+
 ## Prerequisites
 
 This script requires a Bash-compatible shell and the `jq` command-line tool. `curl` is also used but is included by default in the recommended environments.
