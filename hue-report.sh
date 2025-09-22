@@ -11,7 +11,7 @@
 # interactive menu mode or by using command-line arguments for automation.
 #
 # Author: Lachezar Vladikov
-# Version: 1.3.5
+# Version: 1.3.6
 #
 # ==============================================================================
 # USAGE
