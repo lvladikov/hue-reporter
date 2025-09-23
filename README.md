@@ -11,7 +11,7 @@ It can be run with an interactive menu or via command-line arguments for automat
 ## Features
 
 - **Comprehensive Reporting:** Generates a detailed HTML report of all Hue assets, including lights, groups, sensors, rules, and schedules.
-- **Integrated Summaries:** The main HTML report includes summaries for low-battery devices, unreachable lights, and sensor temperatures for a quick overview.
+- **Integrated Summaries:** The main HTML report includes summaries for low-battery devices, unreachable devices (lights, sensors, switches), and sensor temperatures for a quick overview.
 - **Interactive HTML Report:** The generated report includes an interactive table of contents and summary links that allow you to jump directly to detailed sections.
 - **Real-time Console Monitor:** Launch a console-based dashboard that periodically refreshes to show recent changes, including recent device state changes, motion detection, temperatures, and alerts for unreachable or low-battery devices.
 - **Command-Line Interface:** Run tasks directly from the command line (e.g., `-b`, `-r`, `-m`) to bypass the menu, ideal for automation and scheduled tasks.
