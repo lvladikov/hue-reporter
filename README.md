@@ -13,7 +13,7 @@ It can be run with an interactive menu or via command-line arguments for automat
 - **Comprehensive Reporting:** Generates a detailed HTML report of all Hue assets, including lights, groups, sensors, rules, and schedules.
 - **Integrated Summaries:** The main HTML report includes summaries for low-battery devices, unreachable lights, and sensor temperatures for a quick overview.
 - **Interactive HTML Report:** The generated report includes an interactive table of contents and summary links that allow you to jump directly to detailed sections.
-- **Real-time Console Monitor:** Launch a console-based dashboard that periodically refreshes to show recent changes, including newly activated lights, motion detection (this is still **_experimental_**), temperatures, and alerts for unreachable or low-battery devices.
+- **Real-time Console Monitor:** Launch a console-based dashboard that periodically refreshes to show recent changes, including recent device state changes, motion detection, temperatures, and alerts for unreachable or low-battery devices.
 - **Command-Line Interface:** Run tasks directly from the command line (e.g., `-b`, `-r`, `-m`) to bypass the menu, ideal for automation and scheduled tasks.
 - **Flexible Output Formats:** Generate full HTML reports, simple summary HTML files, or raw JSON data files for easy integration with other tools.
 - **Battery Level Reporting:** Quickly identify devices with low batteries, with intelligent de-duplication for motion sensors.
@@ -26,6 +26,14 @@ It can be run with an interactive menu or via command-line arguments for automat
 - **Serial Number Management:** Provides a system for manually mapping serial numbers to your devices for a more complete inventory.
 - **Easy Configuration:** A simple JSON file (`hue_bridges_conf.json`) is used to configure the bridge(s).
 - **Plain Text support for Serial Numbers import:** An optional `hue_serials_mapping-plain-text-info.txt` file allows you to map device serial numbers to your devices.
+
+### A Note on Motion Detection
+
+The script's real-time monitor uses a robust method to detect motion that avoids the common pitfalls of the Hue v1 API. The risk of a false positive is extremely low.
+
+For a motion sensor (`ZLLPresence` type), the script monitors the `state.lastupdated` timestamp. A change in this timestamp is almost exclusively triggered by a change in the sensor's primary attribute, `presence`.
+
+Other data from the same physical device, such as battery level, temperature, or ambient light level, will not cause a false positive for motion. This is because the Hue Bridge cleverly exposes a single physical device as multiple _logical_ sensors, each with its own separate `state` object and `lastupdated` timestamp.
 
 ## Example Report
 

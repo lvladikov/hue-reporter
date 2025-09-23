@@ -11,7 +11,7 @@
 # interactive menu mode or by using command-line arguments for automation.
 #
 # Author: Lachezar Vladikov
-# Version: 1.3.6
+# Version: 1.4.0
 #
 # ==============================================================================
 # USAGE
@@ -35,7 +35,7 @@
 #   -d, --list-devices   Display a summary of all bridges, rooms, and lights.
 #   -t, --temperature    Display temperature readings from motion sensors.
 #   -m, --realtime-mode  Launch a console monitor that refreshes in real-time.
-#                        It tracks newly activated lights, motion detection,
+#                        It tracks recent device state changes, motion detection,
 #                        temperatures, and alerts for unreachable or low-battery devices.
 #   -h, --help           Display this help message.
 #
@@ -2175,6 +2175,7 @@ format_duration() {
     # Trim trailing space
     echo "${final_string% }"
 }
+
 # Function for the real-time console monitor
 run_realtime_monitor() {
     # Trap Ctrl+C for a clean exit
@@ -2192,73 +2193,81 @@ run_realtime_monitor() {
     initial_sensors_json=$(echo "$initial_monitor_data" | jq '.sensors')
 
     local previous_light_states
-    previous_light_states=$(echo "$initial_lights_json" | jq -c 'map({key: .uniqueid, value: .state.on}) | from_entries')
+    previous_light_states=$(echo "$initial_lights_json" | jq -c 'map({key: .uniqueid, value: .state}) | from_entries')
+    
     if [[ -z "$previous_light_states" || "$previous_light_states" == "{}" ]]; then
         echo "Error: Could not fetch initial light states. Cannot start monitor." >&2
         return
     fi
-    local previous_motion_states
-    previous_motion_states=$(echo "$initial_sensors_json" | jq -c 'map(select(.state.presence != null) | {key: .uniqueid, value: .state.presence}) | from_entries')
+
+    local previous_motion_timestamps
+    previous_motion_timestamps=$(echo "$initial_sensors_json" | jq -c 'map(select(.type == "ZLLPresence") | {key: .uniqueid, value: .state.lastupdated}) | from_entries')
 
     while true; do
         clear
         local update_time
         update_time=$(date "+%H:%M:%S")
 
-        # Use the single, efficient fetch function each cycle
         local monitor_data
         monitor_data=$(fetch_all_monitor_data)
         
-        # --- Process All Data in a Single JQ Command ---
         local lights_json
         lights_json=$(echo "$monitor_data" | jq -c '.lights')
         local sensors_json
         sensors_json=$(echo "$monitor_data" | jq -c '.sensors')
 
         local processed_data
-        processed_data=$(printf '%s\n' "$lights_json" "$sensors_json" "$previous_light_states" "$previous_motion_states" | jq -s \
+        processed_data=$(printf '%s\n' "$lights_json" "$sensors_json" "$previous_light_states" "$previous_motion_timestamps" | jq -s \
             --argjson threshold "$LOW_BATTERY_THRESHOLD" \
             '
             # Assign slurped data to variables for clarity
             .[0] as $lights |
             .[1] as $sensors |
-            .[2] as $previous_lights |
-            .[3] as $previous_motion |
+            .[2] as $previous_lights_map |
+            .[3] as $previous_motion_ts |
 
             # --- Reusable Functions ---
             def rpad(len; s):
               (len - (s | length)) as $padding |
               s + (if $padding <= 0 then "" else "                                                  "[:$padding] end);
-
-            # --- Pre-computation ---
+            
+            # --- Pre-computation for sensor name mapping ---
             ($sensors | (reduce (.[] | select(.type == "ZLLPresence")) as $sensor ({}; . + {($sensor.uniqueid | sub("-[0-9a-fA-F]{2}-[0-9a-fA-F]{4}$"; "")): $sensor.name}))
             ) as $name_map |
-            ($lights | map({key: .uniqueid, value: {name: .name, on: .state.on}}) | from_entries) as $current_lights |
-            ($sensors | map(select(.state.presence != null)) | 
-                map(
-                    (.uniqueid | sub("-[0-9a-fA-F]{2}-[0-9a-fA-F]{4}$"; "")) as $base_id |
-                    { key: .uniqueid, value: { displayName: ($name_map[$base_id] // .name), presence: .state.presence } }
-                ) | from_entries
-            ) as $current_motion |
 
-            # --- Section 1: Newly Activated Lights ---
+            # --- Section 1: Recently Changed Lights ---
             (
-                ($current_lights | keys_unsorted) as $all_keys |
-                $all_keys | map(
-                    select(($current_lights[.].on == true) and (($previous_lights[.] // false) == false))
-                    | "  - \($current_lights[.].name)"
+                $lights | map(
+                    . as $light |
+                    $previous_lights_map[.uniqueid] as $prev_state |
+                    (
+                        if $prev_state then [
+                            (if .state.on != $prev_state.on then "Turned \(.state.on | if . then "On" else "Off" end)" else empty end),
+                            (if .state.bri != $prev_state.bri then "Brightness → \((.state.bri / 254 * 100) | round)%" else empty end),
+                            (if .state.ct != $prev_state.ct then "Color Temp → \(.state.ct)K" else empty end),
+                            (if .state.hue != $prev_state.hue then "Hue → \(.state.hue)" else empty end),
+                            (if .state.sat != $prev_state.sat then "Saturation → \(.state.sat)" else empty end),
+                            (if .state.xy != $prev_state.xy then "Color XY → [\((.state.xy | join(", ")))]" else empty end),
+                            (if .state.reachable != $prev_state.reachable then "Became \(.state.reachable | if . then "Reachable" else "Unreachable" end)" else empty end)
+                        ] else [] end
+                    ) as $changes |
+                    if $changes | length > 0 then
+                        "  - \(.name): \($changes | join(", "))"
+                    else empty end
                 ) | sort
-            ) as $newly_on_lights |
+            ) as $light_changes |
 
             # --- Section 2: Newly Detected Motion ---
             (
-                ($current_motion | keys_unsorted) as $all_keys |
-                $all_keys | map(
-                    select(($current_motion[.].presence == true) and (($previous_motion[.] // false) == false))
-                    | "  - \($current_motion[.].displayName)"
+                $sensors | map(select(.type == "ZLLPresence")) |
+                map(
+                    if .state.lastupdated != ($previous_motion_ts[.uniqueid] // "") then
+                        (.uniqueid | sub("-[0-9a-fA-F]{2}-[0-9a-fA-F]{4}$"; "")) as $base_id |
+                        "  - \($name_map[$base_id] // .name)"
+                    else empty end
                 ) | sort
             ) as $newly_detected_motion |
-
+            
             # --- Section 3: Temperatures ---
             (
                 ($sensors | map(select(.state.temperature != null)) |
@@ -2292,22 +2301,22 @@ run_realtime_monitor() {
                 $batt_items | map("  - \(rpad($max_len; .displayName))  (\(.config.battery)%)")
             ) as $low_battery_devices |
 
-            # --- Final Assembly ---
+            # --- Final Assembly & State for next loop ---
             {
-                newly_on_lights: $newly_on_lights,
+                light_changes: $light_changes,
                 newly_detected_motion: $newly_detected_motion,
                 temperatures: $temperatures,
                 unreachable_devices: $unreachable_devices,
                 low_battery_devices: $low_battery_devices,
-                next_light_states: ($current_lights | map_values(.on)),
-                next_motion_states: ($current_motion | map_values(.presence))
+                next_light_states: ($lights | map({key: .uniqueid, value: .state}) | from_entries),
+                next_motion_timestamps: ($sensors | map(select(.type == "ZLLPresence")) | map({key: .uniqueid, value: .state.lastupdated}) | from_entries)
             }
             '
         )
 
         # --- Extract Processed Data for Display ---
-        local newly_on_lights
-        newly_on_lights=$(echo "$processed_data" | jq -r '.newly_on_lights[]')
+        local light_changes
+        light_changes=$(echo "$processed_data" | jq -r '.light_changes[]')
         local newly_detected_motion
         newly_detected_motion=$(echo "$processed_data" | jq -r '.newly_detected_motion[]')
         local temperatures
@@ -2320,8 +2329,8 @@ run_realtime_monitor() {
         # --- Display Output ---
         local monitor_output=""
         monitor_output+="--- Hue Real-time Monitor (Last updated: $update_time) ---\n\n"
-        monitor_output+="\x1b[1;32m💡 RECENTLY ACTIVATED (in last ${formatted_interval})\x1b[0m\n"
-        if [[ -n "$newly_on_lights" ]]; then monitor_output+="$newly_on_lights\n"; else monitor_output+="  No new lights turned on.\n"; fi
+        monitor_output+="\x1b[1;32m💡 RECENTLY CHANGED (in last ${formatted_interval})\x1b[0m\n"
+        if [[ -n "$light_changes" ]]; then monitor_output+="$light_changes\n"; else monitor_output+="  No light state changes detected.\n"; fi
         monitor_output+="\n"
         monitor_output+="\x1b[1;33m🏃 MOTION DETECTED (in last ${formatted_interval})\x1b[0m\n"
         if [[ -n "$newly_detected_motion" ]]; then monitor_output+="$newly_detected_motion\n"; else monitor_output+="  No new motion detected.\n"; fi
@@ -2329,7 +2338,7 @@ run_realtime_monitor() {
         monitor_output+="\x1b[1;34m🔥 TEMPERATURES\x1b[0m\n"
         if [[ -n "$temperatures" ]]; then monitor_output+="$temperatures\n"; else monitor_output+="  No temperature sensors found.\n"; fi
         monitor_output+="\n"
-        monitor_output+="\x1b[1;31m⚠️ ALERTS\x1b[0m\n"
+        monitor_output+="\x1b[1;31m⚠️  ALERTS\x1b[0m\n"
         
         local alerts_found=false
         if [[ -n "$unreachable_devices" ]]; then
@@ -2351,7 +2360,7 @@ run_realtime_monitor() {
 
         # --- Update State for Next Loop ---
         previous_light_states=$(echo "$processed_data" | jq -c '.next_light_states')
-        previous_motion_states=$(echo "$processed_data" | jq -c '.next_motion_states')
+        previous_motion_timestamps=$(echo "$processed_data" | jq -c '.next_motion_timestamps')
 
         # --- Wait and Handle Input ---
         echo "-----------------------------------------------------------"
