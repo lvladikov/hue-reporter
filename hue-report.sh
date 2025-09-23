@@ -11,7 +11,7 @@
 # interactive menu mode or by using command-line arguments for automation.
 #
 # Author: Lachezar Vladikov
-# Version: 1.4.0
+# Version: 1.4.2
 #
 # ==============================================================================
 # USAGE
@@ -32,7 +32,7 @@
 #   -s, --create-serials Create or update the light serial number mapping file.
 #   -b, --battery-check  Check for low battery devices.
 #   -u, --unreachable    List all unreachable devices.
-#   -d, --list-devices   Display a summary of all bridges, rooms, and lights.
+#   -d, --list-devices   Display a summary of all bridges, rooms, lights, and sensors.
 #   -t, --temperature    Display temperature readings from motion sensors.
 #   -m, --realtime-mode  Launch a console monitor that refreshes in real-time.
 #                        It tracks recent device state changes, motion detection,
@@ -393,7 +393,7 @@ fetch_data() {
             continue
         fi
 
-        # --- NEW: Fetch detailed scene data ---
+        # --- Fetch detailed scene data ---
         local bridge_ip=$(echo "$response_json" | jq -r '.bridge_ip')
         local bridge_user=$(echo "$response_json" | jq -r '.bridge_user')
         local scenes_json=$(echo "$response_json" | jq '.scenes')
@@ -650,13 +650,11 @@ print_console_summaries() {
         .[0] as $all_lights | .[1] as $serials |
         $all_lights | map(select(($serials[.uniqueid].serialNumber // "") == ""))
         | group_by(.bridgeName)
-        | if length > 0 then
-            "--- Lights Missing Serial Numbers ---" +
-            (map(
-                "\n  \u001b[1m" + .[0].bridgeName + "\u001b[0m" + # Bold bridge name
-                (map("\n    - " + .name) | join(""))
-            ) | join(""))
-        else "" end
+        | if length == 0 then "" else
+            "--- Lights Missing Serial Numbers ---" + (
+                map("\n   🌉 \u001b[1;36m" + .[0].bridgeName + "\u001b[0m" + (map("\n    - " + .name) | join(""))) | join("")
+            )
+          end
     ')
 
     # 2. Unreachable Devices Console Report
@@ -664,13 +662,11 @@ print_console_summaries() {
     unreachable_lights_console=$(echo "$all_lights_json" | jq -r '
         map(select(.state.reachable == false))
         | group_by(.bridgeName)
-        | if length > 0 then
-            "--- Unreachable Devices ---" +
-            (map(
-                "\n  \u001b[1m" + .[0].bridgeName + "\u001b[0m" + # Bold bridge name
-                (map("\n    - " + .name) | join(""))
-            ) | join(""))
-        else "" end
+        | if length == 0 then "" else
+            "--- Unreachable Devices ---" + (
+                map("\n   🌉 \u001b[1;36m" + .[0].bridgeName + "\u001b[0m" + (map("\n    - " + .name) | join(""))) | join("")
+            )
+          end
     ')
 
     # 3. Low Battery Console Report
@@ -689,13 +685,11 @@ print_console_summaries() {
             )
             | group_by(.displayName) | map(.[0])
             | group_by(.bridgeName)
-            | if length > 0 then
-                "--- Devices with battery lower than \($threshold)% ---" +
-                (map(
-                    "\n  \u001b[1m" + .[0].bridgeName + "\u001b[0m" +
-                    (map("\n    - " + .displayName + " (" + (.config.battery|tostring) + "%)") | join(""))
-                ) | join(""))
-            else "" end
+            | if length == 0 then "" else
+                "--- Devices with battery lower than \($threshold)% ---" + (
+                    map("\n   🌉 \u001b[1;36m" + .[0].bridgeName + "\u001b[0m" + (map("\n    - " + .displayName + " (" + (.config.battery|tostring) + "%)") | join(""))) | join("")
+                )
+              end
         ')
     fi
 
@@ -741,7 +735,7 @@ ask_to_open_file() {
 }
 
 # Function to process the data and generate a styled HTML report
-# NEW: Function now respects boolean flags for output generation.
+# Function now respects boolean flags for output generation.
 generate_report() {
     local generate_html=$1
     local generate_json=$2
@@ -1098,7 +1092,7 @@ EOF
             while read -r bridge_obj; do
                 local bridge_name
                 bridge_name=$(echo "$bridge_obj" | jq -r '.bridge_name')
-                echo "         - Processing Bridge: '$bridge_name'"
+                printf "         - Processing Bridge: 🌉 \e[1;36m'%s'\e[0m\n" "$bridge_name"
 
                 bridge_info_html=$(echo "$bridge_obj" | jq -r '
                     . as $bridge |
@@ -1407,7 +1401,7 @@ EOF
                                     if $attribute == "buttonevent" and $cond.operator == "eq" then
                                         ($cond.value | tonumber) as $code |
                                         "If <a href=\"#code-\($code)\">" + (decode_buttonevent($code; $item_name)) + "</a>"
-                                    # --- NEW: Intelligent handling of dynamic scene sensors ---
+                                    # --- Intelligent handling of dynamic scene sensors ---
                                     elif $item_name == "cycleState" and $attribute == "status" and $cond.operator == "eq" and ($cond.value | tonumber) == 0 then
                                         "If <a href=\"#appendix-sensors\">dynamic scenes are inactive</a>"
                                     elif $item_name == "cycleState" and $attribute == "status" and $cond.operator == "eq" and ($cond.value | tonumber) == 1 then
@@ -1454,7 +1448,7 @@ EOF
                         elif $k == "effect" then "Set effect to <b>\($v)</b>"
                         elif $k == "transitiontime" then "Set transition time to <b>\(($v / 10))s</b>"
                         elif $k == "scene" and $scenes_map[$v] then "Activate scene <b><a href=\"#\($safe_bridge_name)-scene-\($v)\">\($scenes_map[$v])</a></b>"
-                        # --- NEW: Intelligent handling of schedule and dynamic scene actions ---
+                        # --- Intelligent handling of schedule and dynamic scene actions ---
                         elif item_type == "schedule" and $k == "status" then (if $v == "enabled" then "Enable" else "Disable" end) + " the schedule <b>\(item_name)</b>"
                         elif item_type == "schedule" and $k == "localtime" then "\($v | decode_localtime) for schedule <b>\(item_name)</b>"
                         elif item_name == "cycling" and $k == "status" and $v == 0 then "<a href=\"#appendix-sensors\">Stop the current color cycle</a>"
@@ -1835,7 +1829,7 @@ EOF
 
         group_summary=$(echo "$API_RESPONSE" | jq -r '
             .[] |
-            "    \u001b[1m" + .bridge_name + " Groups:\u001b[0m" +
+            "     🌉 \u001b[1;36m" + .bridge_name + "\u001b[0m Groups:" +
             (
                 .groups | to_entries | sort_by(.value.name) |
                 map("\n      - " + .value.name + ": " + (.value.lights | length | tostring) + " lights") | join("")
@@ -1862,7 +1856,7 @@ EOF
     fi
 }
 
-# NEW: Lightweight function to fetch only specific data from all bridges
+# Lightweight function to fetch only specific data from all bridges
 # $1: the top-level key to fetch (e.g., "sensors", "lights")
 fetch_all_simple_data() {
     local key_to_fetch=$1
@@ -1917,7 +1911,7 @@ fetch_all_simple_data() {
     echo "$combined_data"
 }
 
-# NEW: Unified function to run a summary task and handle output.
+# Unified function to run a summary task and handle output.
 # $1: task_name (e.g., "BatteryCheck")
 # $2: output_json (true/false)
 # $3: output_html (true/false)
@@ -1938,11 +1932,12 @@ run_summary_task() {
     local JQ_LOGIC='
         # Determines a user-friendly name for a sensor type using the most reliable identifier
         def get_device_type:
-            if (.productname | test("motion"; "i")) or .type == "ZLLPresence" then "Motion Sensor"
-            elif (.productname | test("tap"; "i")) or .type == "ZGPSwitch" then "Tap Switch"
-            elif .productname | test("dimmer"; "i") then "Dimmer"
-            elif .productname | test("smart button"; "i") then "Button"
-            elif .productname | test("wall switch"; "i") then "Wall Switch"
+            # Add guards `(...) // ""` to prevent errors on null .productname
+            if ((.productname // "") | test("motion"; "i")) or .type == "ZLLPresence" then "Motion Sensor"
+            elif ((.productname // "") | test("tap"; "i")) or .type == "ZGPSwitch" then "Tap Switch"
+            elif ((.productname // "") | test("dimmer"; "i")) then "Dimmer"
+            elif ((.productname // "") | test("smart button"; "i")) then "Button"
+            elif ((.productname // "") | test("wall switch"; "i")) then "Wall Switch"
             elif .type == "ZLLRelativeRotary" then "Rotary Dial"
             else "Sensor" # Fallback
             end;
@@ -1951,7 +1946,8 @@ run_summary_task() {
         (
             [ .[] | select(.type | IN("ZLLPresence","ZGPSwitch","ZLLSwitch","ZHASwitch","ZLLRelativeRotary")) ]
             | map({
-                key: (.uniqueid | sub("-[0-9a-fA-F]{2}-[0-9a-fA-F]{4}$"; "")),
+                # Add guard for null .uniqueid
+                key: ((.uniqueid // "") | sub("-[0-9a-fA-F]{2}-[0-9a-fA-F]{4}$"; "")),
                 value: .name
               })
             | from_entries
@@ -1978,7 +1974,7 @@ run_summary_task() {
             local all_sensors_json
             all_sensors_json=$(fetch_all_simple_data "sensors")
             if [[ -z "$all_sensors_json" || "$all_sensors_json" == "[]" ]]; then echo "Could not retrieve sensor data." >&2; return; fi
-            
+
             data_json=$(echo "$all_sensors_json" | jq --argjson threshold "$LOW_BATTERY_THRESHOLD" "
                 ${JQ_LOGIC}
                 [ .[] | select(.config.battery != null and (.config.battery | tonumber) < (\$threshold | tonumber)) ]
@@ -1987,11 +1983,11 @@ run_summary_task() {
 
             local jq_console_format='
                 def get_device_type:
-                    if (.productname | test("motion"; "i")) or .type == "ZLLPresence" then "Motion Sensor"
-                    elif (.productname | test("tap"; "i")) or .type == "ZGPSwitch" then "Tap Switch"
-                    elif .productname | test("dimmer"; "i") then "Dimmer"
-                    elif .productname | test("smart button"; "i") then "Button"
-                    elif .productname | test("wall switch"; "i") then "Wall Switch"
+                    if ((.productname // "") | test("motion"; "i")) or .type == "ZLLPresence" then "Motion Sensor"
+                    elif ((.productname // "") | test("tap"; "i")) or .type == "ZGPSwitch" then "Tap Switch"
+                    elif ((.productname // "") | test("dimmer"; "i")) then "Dimmer"
+                    elif ((.productname // "") | test("smart button"; "i")) then "Button"
+                    elif ((.productname // "") | test("wall switch"; "i")) then "Wall Switch"
                     elif .type == "ZLLRelativeRotary" then "Rotary Dial"
                     else "Sensor"
                     end;
@@ -2003,10 +1999,9 @@ run_summary_task() {
                 else
                     (map((. | get_device_type) + ": " + .displayName | length) | max // 0) as $max_len
                     |
-                    group_by(.bridgeName)
-                    | "--- Devices with battery lower than \($threshold)% ---" +
-                      (map(
-                          "\n  \u001b[1m" + .[0].bridgeName + "\u001b[0m" +
+                    "--- Devices with battery lower than \($threshold)% --- " + (
+                      group_by(.bridgeName) | map(
+                          "\n   🌉 \u001b[1;36m" + .[0].bridgeName + "\u001b[0m" +
                           (
                               sort_by(.displayName) | map(
                                   "\n    - \(rpad($max_len; (. | get_device_type) + ": " + .displayName))  (\(.config.battery)%)"
@@ -2016,14 +2011,14 @@ run_summary_task() {
                 end
             '
             console_output=$(echo "$data_json" | jq -r --arg threshold "$LOW_BATTERY_THRESHOLD" "$jq_console_format")
-            
+
             local jq_html_format='
                 def get_device_type:
-                    if (.productname | test("motion"; "i")) or .type == "ZLLPresence" then "Motion Sensor"
-                    elif (.productname | test("tap"; "i")) or .type == "ZGPSwitch" then "Tap Switch"
-                    elif .productname | test("dimmer"; "i") then "Dimmer"
-                    elif .productname | test("smart button"; "i") then "Button"
-                    elif .productname | test("wall switch"; "i") then "Wall Switch"
+                    if ((.productname // "") | test("motion"; "i")) or .type == "ZLLPresence" then "Motion Sensor"
+                    elif ((.productname // "") | test("tap"; "i")) or .type == "ZGPSwitch" then "Tap Switch"
+                    elif ((.productname // "") | test("dimmer"; "i")) then "Dimmer"
+                    elif ((.productname // "") | test("smart button"; "i")) then "Button"
+                    elif ((.productname // "") | test("wall switch"; "i")) then "Wall Switch"
                     elif .type == "ZLLRelativeRotary" then "Rotary Dial"
                     else "Sensor"
                     end;
@@ -2058,16 +2053,15 @@ run_summary_task() {
                     | map(. + {type: (. | get_device_type), name: .displayName})
                 ')
             fi
-            
+
             data_json=$(printf '%s\n%s' "$unreachable_lights" "$unreachable_sensors" | jq -s 'add')
 
             console_output=$(echo "$data_json" | jq -r '
                 if length == 0 then "✅ All devices are reachable."
                 else
-                    group_by(.bridgeName)
-                    | "--- Unreachable Devices ---" +
-                      (map(
-                          "\n  \u001b[1m" + .[0].bridgeName + "\u001b[0m" +
+                    "--- Unreachable Devices --- " + (
+                      group_by(.bridgeName) | map(
+                          "\n   🌉 \u001b[1;36m" + .[0].bridgeName + "\u001b[0m" +
                           (sort_by(.displayName) | map("\n    - \(.type): \(.name)") | join(""))
                       ) | join(""))
                 end')
@@ -2081,63 +2075,149 @@ run_summary_task() {
                 ) | join("")) + "</ul"')
             ;;
         ListDevices)
-            title="All Bridges, Rooms, and Lights"
-            echo "Fetching group and light data from all bridges..."
+            title="All Bridges, Rooms, Lights, and Sensors"
+            echo "Fetching group, light, and sensor data from all bridges..."
             local lights_json=$(fetch_all_simple_data "lights")
             local groups_json=$(fetch_all_simple_data "groups")
-            if [[ -z "$lights_json" || "$lights_json" == "[]" ]]; then echo "Could not retrieve device data." >&2; return; fi
+            local sensors_json=$(fetch_all_simple_data "sensors")
+            if [[ -z "$lights_json" || "$lights_json" == "[]" ]]; then echo "Could not retrieve light/group data." >&2; return; fi
 
-            data_json=$(printf '%s\n%s' "$lights_json" "$groups_json" | jq -s '.[0] as $lights | .[1] as $groups | {lights: $lights, groups: $groups}')
+            data_json=$(printf '%s\n%s\n%s' "$lights_json" "$groups_json" "$sensors_json" | jq -s '
+                .[0] as $lights | .[1] as $groups | .[2] as $sensors |
+                {lights: $lights, groups: $groups, sensors: $sensors}
+            ')
 
-            console_output=$(echo "$data_json" | jq -r '
-                .lights as $lights | .groups as $groups |
-                ($lights | map(.bridgeName) | unique | sort) as $bridge_names |
-                ($groups | map(.lights // []) | flatten | unique) as $all_assigned_ids |
+            local jq_console_format='
+                def get_device_type:
+                    if ((.productname // "") | test("motion"; "i")) or .type == "ZLLPresence" then "Motion Sensor"
+                    elif ((.productname // "") | test("tap"; "i")) or .type == "ZGPSwitch" then "Tap Switch"
+                    elif ((.productname // "") | test("dimmer"; "i")) then "Dimmer"
+                    elif ((.productname // "") | test("smart button"; "i")) then "Button"
+                    elif ((.productname // "") | test("wall switch"; "i")) then "Wall Switch"
+                    elif .type == "ZLLRelativeRotary" then "Rotary Dial"
+                    else "Sensor"
+                    end;
+
+                .lights as $lights | .groups as $groups | .sensors as $raw_sensors |
+                ($raw_sensors | map(select((.type | startswith("CLIP") | not) and .type != "Daylight"))) as $sensors |
+
+                ($lights | map({key: .id, value: {name: .name}}) | from_entries) as $lights_map |
+                ($groups | map(.lights // []) | flatten | unique) as $assigned_light_ids |
+
+                ([$sensors[] | select(.type|IN("ZLLPresence","ZGPSwitch","ZLLSwitch","ZHASwitch","ZLLRelativeRotary"))] | map({key:((.uniqueid // "")|sub("-[0-9a-fA-F]{2}-[0-9a-fA-F]{4}$";"")), value:.name})|from_entries) as $name_map |
+                ($sensors | map(. as $s | ((.uniqueid // "")|sub("-[0-9a-fA-F]{2}-[0-9a-fA-F]{4}$";"")) as $base_id | . + {displayName:($name_map[$base_id]//.name//.productname//("Sensor "+(.id//"")))}) | group_by(.displayName) | map((map(select(.type|IN("ZLLPresence","ZGPSwitch","ZLLSwitch","ZHASwitch","ZLLRelativeRotary")))|.[0]) as $p | ($p//.[0]))) as $physical_sensors |
+
+                ($lights + $groups + $sensors | map(.bridgeName) | unique | sort) as $bridge_names |
 
                 "--- Device Summary ---" +
                 ($bridge_names | map(
                     . as $bridge_name |
-                    "\n\n  \u001b[1m" + $bridge_name + "\u001b[0m" +
+                    "\n\n   🌉 \u001b[1;36m" + $bridge_name + "\u001b[0m" +
+
+                    # 1. Loop through Groups and their Lights
                     (
                         ($groups | map(select(.bridgeName == $bridge_name)) | sort_by(.name))
                         | map(
                             . as $group |
-                            "\n    - \($group.name) (" + (($group.lights // []) | length | tostring) + " lights)"
+                            "\n    - \($group.name)" +
+                            (
+                                ($group.lights // []) as $light_ids |
+                                ($light_ids | map(
+                                    $lights_map[.] as $light_details |
+                                    if $light_details then "\n        - Light: \($light_details.name)" else "" end
+                                ) | join(""))
+                            )
                         ) | join("")
                     ) +
+
+                    # 2. List Unassigned Lights
                     (
-                        ($lights | map(select(.bridgeName == $bridge_name and (.id as $light_id | $all_assigned_ids | index($light_id) | not)))) as $unassigned |
-                        if ($unassigned | length) > 0 then
-                            "\n    - Unassigned (" + ($unassigned | length | tostring) + " lights)"
+                        ($lights | map(select(.bridgeName == $bridge_name and (.id as $light_id | ($assigned_light_ids | index($light_id) | not)))) | sort_by(.name)) as $unassigned_lights |
+                        if ($unassigned_lights | length > 0) then
+                            "\n    - Unassigned Lights" +
+                            ($unassigned_lights | map("\n        - Light: " + .name) | join(""))
+                        else "" end
+                    ) +
+
+                    # 3. List all Sensors for the bridge
+                    (
+                        ($physical_sensors | map(select(.bridgeName == $bridge_name)) | sort_by(.displayName)) as $bridge_sensors |
+                        if ($bridge_sensors | length > 0) then
+                            "\n    - Sensors" +
+                            ($bridge_sensors | map("\n        - " + (. | get_device_type) + ": " + .displayName) | join(""))
                         else "" end
                     )
                 ) | join(""))
-            ')
+            '
+            console_output=$(echo "$data_json" | jq -r "$jq_console_format")
 
-            html_output=$(echo "$data_json" | jq -r '
-                .lights as $lights | .groups as $groups |
-                ($lights | map(.bridgeName) | unique | sort) as $bridge_names |
-                ($groups | map(.lights // []) | flatten | unique) as $all_assigned_ids |
+            local jq_html_format='
+                def get_device_type:
+                    if ((.productname // "") | test("motion"; "i")) or .type == "ZLLPresence" then "Motion Sensor"
+                    elif ((.productname // "") | test("tap"; "i")) or .type == "ZGPSwitch" then "Tap Switch"
+                    elif ((.productname // "") | test("dimmer"; "i")) then "Dimmer"
+                    elif ((.productname // "") | test("smart button"; "i")) then "Button"
+                    elif ((.productname // "") | test("wall switch"; "i")) then "Wall Switch"
+                    elif .type == "ZLLRelativeRotary" then "Rotary Dial"
+                    else "Sensor"
+                    end;
+
+                .lights as $lights | .groups as $groups | .sensors as $raw_sensors |
+                ($raw_sensors | map(select((.type | startswith("CLIP") | not) and .type != "Daylight"))) as $sensors |
+
+                ($lights | map({key: .id, value: {name: .name}}) | from_entries) as $lights_map |
+                ($groups | map(.lights // []) | flatten | unique) as $assigned_light_ids |
+
+                ([$sensors[] | select(.type|IN("ZLLPresence","ZGPSwitch","ZLLSwitch","ZHASwitch","ZLLRelativeRotary"))] | map({key:((.uniqueid // "")|sub("-[0-9a-fA-F]{2}-[0-9a-fA-F]{4}$";"")), value:.name})|from_entries) as $name_map |
+                ($sensors | map(. as $s | ((.uniqueid // "")|sub("-[0-9a-fA-F]{2}-[0-9a-fA-F]{4}$";"")) as $base_id | . + {displayName:($name_map[$base_id]//.name//.productname//("Sensor "+(.id//"")))}) | group_by(.displayName) | map((map(select(.type|IN("ZLLPresence","ZGPSwitch","ZLLSwitch","ZHASwitch","ZLLRelativeRotary")))|.[0]) as $p | ($p//.[0]))) as $physical_sensors |
+
+                ($lights + $groups + $sensors | map(.bridgeName) | unique | sort) as $bridge_names |
+
                 "<ul>" +
                 ($bridge_names | map(
                     . as $bridge_name |
                     "<li><strong>" + $bridge_name + "</strong><ul>" +
+                    # 1. List Groups and their Lights
                     (
                         ($groups | map(select(.bridgeName == $bridge_name)) | sort_by(.name))
                         | map(
                             . as $group |
-                            "<li>" + .name + " (" + (($group.lights // []) | length | tostring) + " lights)</li>"
+                            "<li><strong>" + .name + "</strong>" +
+                            (
+                                if (.lights // [] | length) > 0 then
+                                    "<ul>" +
+                                    ((.lights // []) | map(
+                                        $lights_map[.] as $light_details |
+                                        if $light_details then "<li>Light: \($light_details.name)</li>" else "" end
+                                    ) | join("")) +
+                                    "</ul>"
+                                else "" end
+                            ) +
+                            "</li>"
                         ) | join("")
                     ) +
+                    # 2. List Unassigned Lights
                     (
-                        ($lights | map(select(.bridgeName == $bridge_name and (.id as $light_id | $all_assigned_ids | index($light_id) | not)))) as $unassigned |
-                        if ($unassigned | length) > 0 then
-                            "<li>Unassigned (" + ($unassigned | length | tostring) + " lights)</li>"
+                        ($lights | map(select(.bridgeName == $bridge_name and (.id as $light_id | ($assigned_light_ids | index($light_id) | not)))) | sort_by(.name)) as $unassigned_lights |
+                        if ($unassigned_lights | length > 0) then
+                            "<li><strong>Unassigned Lights</strong><ul>" +
+                            ($unassigned_lights | map("<li>Light: " + .name + "</li>") | join("")) +
+                            "</ul></li>"
+                        else "" end
+                    ) +
+                    # 3. List Sensors
+                    (
+                        ($physical_sensors | map(select(.bridgeName == $bridge_name)) | sort_by(.displayName)) as $bridge_sensors |
+                        if ($bridge_sensors | length > 0) then
+                            "<li><strong>Sensors</strong><ul>" +
+                            ($bridge_sensors | map("<li>" + (. | get_device_type) + ": " + .displayName + "</li>") | join("")) +
+                            "</ul></li>"
                         else "" end
                     ) +
                     "</ul></li>"
                 ) | join("")) + "</ul>"
-            ')
+            '
+            html_output=$(echo "$data_json" | jq -r "$jq_html_format")
             ;;
         TemperatureCheck)
             title="Sensor Temperatures"
@@ -2155,30 +2235,41 @@ run_summary_task() {
                     fahrenheit: (((.state.temperature / 100 * 1.8 + 32) * 100 | round) / 100)
                 })
             ')
-            
+
             local jq_console_format='
                 def rpad(len; s):
                     (len - (s | length)) as $padding |
                     s + (if $padding <= 0 then "" else "                                                  "[:$padding] end);
 
+                # Function to color the temperature string based on value
+                def colorize_temp:
+                    . as $temp_c |
+                    if $temp_c > 25 then "\u001b[1;31m"      # Bright Red for high
+                    elif $temp_c < 15 then "\u001b[1;34m"   # Bright Blue for cold
+                    else ""                                 # Default color
+                    end;
+
                 if length == 0 then "✅ No temperature sensors found."
                 else
                     (map(.displayName | length) | max // 0) as $max_len
                     |
-                    group_by(.bridgeName)
-                    | "--- Sensor Temperatures ---" +
-                      (map(
-                          "\n  \u001b[1m" + .[0].bridgeName + "\u001b[0m" +
+                    "--- Sensor Temperatures --- " + (
+                      group_by(.bridgeName) | map(
+                          "\n   🌉 \u001b[1;36m" + .[0].bridgeName + "\u001b[0m" +
                           (
                               sort_by(.displayName) | map(
-                                  "\n    - \(rpad($max_len; .displayName)): \(.celsius)°C / \(.fahrenheit)°F"
+                                  # Apply colorization to the temperature output
+                                  "\n    - \(rpad($max_len; .displayName)): " +
+                                  (.celsius | colorize_temp) +
+                                  "\(.celsius)°C / \(.fahrenheit)°F" +
+                                  (if (.celsius | colorize_temp) != "" then "\u001b[0m" else "" end)
                               ) | join("")
                           )
                       ) | join(""))
                 end
             '
             console_output=$(echo "$data_json" | jq -r "$jq_console_format")
-            
+
             html_output=$(echo "$data_json" | jq -r '
                 "<ul>" +
                 (group_by(.bridgeName) | map(
@@ -2406,58 +2497,61 @@ run_realtime_monitor() {
                 | from_entries
             ) as $name_map |
 
-            # --- Section 1: Recently Changed Lights ---
+            # --- Section 1: Recently Changed Lights (structured objects) ---
             (
-                $lights | map(
+                $lights
+                | map(
                     . as $light |
                     $previous_lights_map[.uniqueid] as $prev_state |
                     (
                         if $prev_state then [
-                            (if .state.on != $prev_state.on then "Turned \(.state.on | if . then "On" else "Off" end)" else empty end),
-                            (if .state.bri != $prev_state.bri then "Brightness → \((.state.bri / 254 * 100) | round)%" else empty end),
-                            (if .state.ct != $prev_state.ct then "Color Temp → \(.state.ct)K" else empty end),
-                            (if .state.hue != $prev_state.hue then "Hue → \(.state.hue)" else empty end),
-                            (if .state.sat != $prev_state.sat then "Saturation → \(.state.sat)" else empty end),
-                            (if .state.xy != $prev_state.xy then "Color XY → [\((.state.xy | join(", ")))]" else empty end),
-                            (if .state.reachable != $prev_state.reachable then "Became \(.state.reachable | if . then "Reachable" else "Unreachable" end)" else empty end)
+                            (if .state.on != $prev_state.on then ("Turned " + (.state.on | if . then "On" else "Off" end)) else empty end),
+                            (if .state.bri != $prev_state.bri then ("Brightness → " + ((.state.bri / 254 * 100) | round | tostring) + "%") else empty end),
+                            (if .state.ct != $prev_state.ct then ("Color Temp → " + (.state.ct|tostring) + "K") else empty end),
+                            (if .state.hue != $prev_state.hue then ("Hue → " + (.state.hue|tostring)) else empty end),
+                            (if .state.sat != $prev_state.sat then ("Saturation → " + (.state.sat|tostring)) else empty end),
+                            (if .state.xy != $prev_state.xy then ("Color XY → [" + (.state.xy | join(", ")) + "]") else empty end),
+                            (if .state.reachable != $prev_state.reachable then ("Became " + (.state.reachable | if . then "Reachable" else "Unreachable" end)) else empty end)
                         ] else [] end
                     ) as $changes |
-                    if $changes | length > 0 then
-                        "  - \(.name): \($changes | join(", "))"
+                    if ($changes | length) > 0 then
+                        { bridgeName: .bridgeName, name: .name, changes: ($changes | join(", ")) }
                     else empty end
-                ) | sort
+                )
             ) as $light_changes |
 
-            # --- Section 2: Newly Detected Motion ---
+            # --- Section 2: Newly Detected Motion (structured objects) ---
             (
-                $sensors | map(select(.type == "ZLLPresence")) |
-                map(
-                    if .state.lastupdated != ($previous_motion_ts[.uniqueid] // "") then
-                        (.uniqueid | sub("-[0-9a-fA-F]{2}-[0-9a-fA-F]{4}$"; "")) as $base_id |
-                        "  - \($name_map[$base_id] // .name)"
+                $sensors
+                | map(select(.type == "ZLLPresence"))
+                | map(
+                    . as $sensor |
+                    (($sensor.uniqueid // "") | sub("-[0-9a-fA-F]{2}-[0-9a-fA-F]{4}$"; "")) as $base_id |
+                    if $sensor.state.lastupdated != ($previous_motion_ts[$sensor.uniqueid] // "") then
+                        { bridgeName: $sensor.bridgeName, name: ($name_map[$base_id] // $sensor.name) }
                     else empty end
-                ) | sort
+                )
             ) as $newly_detected_motion |
             
-            # --- Section 3: Temperatures ---
+            # --- Section 3: Temperatures (structured objects) ---
             (
-                ($sensors | map(select(.state.temperature != null)) |
-                    map(
-                        (.uniqueid | sub("-[0-9a-fA-F]{2}-[0-9a-fA-F]{4}$"; "")) as $base_id |
-                        . + {
-                            displayName: ($name_map[$base_id] // .name),
-                            celsius: (.state.temperature / 100),
-                            fahrenheit: (((.state.temperature / 100 * 1.8 + 32) * 100 | round) / 100)
-                        }
-                    ) | sort_by(.displayName)
-                ) as $temp_items |
-                ($temp_items | map(.displayName | length) | max // 0) as $max_len |
-                $temp_items | map("  - \(rpad($max_len; .displayName))  : \(.celsius)°C / \(.fahrenheit)°F")
+                $sensors
+                | map(select(.state.temperature != null))
+                | map(
+                    (.uniqueid | sub("-[0-9a-fA-F]{2}-[0-9a-fA-F]{4}$"; "")) as $base_id |
+                    {
+                        bridgeName: .bridgeName,
+                        displayName: ($name_map[$base_id] // .name),
+                        celsius: (.state.temperature / 100),
+                        fahrenheit: (((.state.temperature / 100 * 1.8 + 32) * 100 | round) / 100)
+                    }
+                )
+                | sort_by(.bridgeName, .displayName)
             ) as $temperatures |
 
-            # --- Section 4.1: Unreachable (with dynamic device type) ---
+            # --- Section 4.1: Unreachable (structured objects grouped later) ---
             (
-                ($lights | map(select(.state.reachable == false)) | sort_by(.name) | map("  - Light: " + .name))
+                ($lights | map(select(.state.reachable == false)) | map({bridgeName: .bridgeName, type: "Light", name: .name, id: .uniqueid}))
                 +
                 (
                     ($sensors | map(select(.config.reachable == false)))
@@ -2466,33 +2560,28 @@ run_realtime_monitor() {
                         (($unreachable_sensor.uniqueid // "") | sub("-[0-9a-fA-F]{2}-[0-9a-fA-F]{4}$"; "")) as $base_id |
                         . + { displayName: ($name_map[$base_id] // .name // .productname // ("Sensor " + (.id // ""))) }
                       )
-                    | group_by(.displayName) 
+                    | group_by(.displayName)
                     | map(
-                        (map(select(.type | IN("ZLLPresence","ZGPSwitch","ZLLSwitch","ZHASwitch","ZLLRelativeRotary"))) | .[0]) as $primary | ($primary // .[0])
+                        (map(select(.type | IN("ZLLPresence","ZGPSwitch","ZLLSwitch","ZHASwitch","ZLLRelativeRotary"))) | .[0]) as $primary
+                        | ($primary // .[0])
                       )
-                    | sort_by(.displayName)
-                    | map("  - \(. | get_device_type): \(.displayName)")
+                    | map({bridgeName: .bridgeName, type: (. | get_device_type), name: .displayName, id: .id})
                 )
-            ) as $unreachable_devices |
+            )
+            as $unreachable_devices |
             
-            # --- Section 4.2: Low Battery (with dynamic device type and padding) ---
+            # --- Section 4.2: Low Battery (structured objects) ---
             (
-                ($sensors | map(select(.config.battery != null and (.config.battery | tonumber) < ($threshold | tonumber))) |
-                    map(
-                        (.uniqueid | sub("-[0-9a-fA-F]{2}-[0-9a-fA-F]{4}$"; "")) as $base_id |
-                        . + { displayName: ($name_map[$base_id] // .name) }
-                    ) 
-                    | group_by(.displayName) 
+                ($sensors
+                    | map(select(.config.battery != null and (.config.battery | tonumber) < ($threshold | tonumber)))
                     | map(
-                        (map(select(.type | IN("ZLLPresence","ZGPSwitch","ZLLSwitch","ZHASwitch","ZLLRelativeRotary"))) | .[0]) as $primary | ($primary // .[0])
+                        (.uniqueid | sub("-[0-9a-fA-F]{2}-[0-9a-fA-F]{4}$"; "")) as $base_id |
+                        . + { displayName: ($name_map[$base_id] // .name), sensor_id: .id }
                       )
+                    | group_by(.displayName)
+                    | map((map(select(.type | IN("ZLLPresence","ZGPSwitch","ZLLSwitch","ZHASwitch","ZLLRelativeRotary"))) | .[0]) as $primary | ($primary // .[0]))
                     | sort_by(.displayName)
-                ) as $batt_items
-                |
-                ($batt_items | map((. | get_device_type) + ": " + .displayName | length) | max // 0) as $max_len
-                |
-                $batt_items | map(
-                    "  - \(rpad($max_len; (. | get_device_type) + ": " + .displayName))  (\(.config.battery)%)"
+                    | map({ bridgeName: .bridgeName, type: (.| get_device_type), name: .displayName, id: .sensor_id, battery: (.config.battery | tostring) })
                 )
             ) as $low_battery_devices |
 
@@ -2511,15 +2600,86 @@ run_realtime_monitor() {
 
         # --- Extract Processed Data for Display ---
         local light_changes
-        light_changes=$(echo "$processed_data" | jq -r '.light_changes[]')
+        light_changes=$(echo "$processed_data" | jq -r '
+        .light_changes
+        | if length > 0 then (
+            group_by(.bridgeName)
+            | map("   🌉 \u001b[1;36m" + (.[0].bridgeName) + "\u001b[0m\n" + (map("    - " + .name + ": " + .changes) | join("\n")) )
+            | join("\n")
+          ) else "" end
+        ')
         local newly_detected_motion
-        newly_detected_motion=$(echo "$processed_data" | jq -r '.newly_detected_motion[]')
+        newly_detected_motion=$(echo "$processed_data" | jq -r '
+        .newly_detected_motion
+        | if length > 0 then (
+            group_by(.bridgeName)
+            | map("   🌉 \u001b[1;36m" + (.[0].bridgeName) + "\u001b[0m\n" + (map("    - " + .name) | join("\n")) )
+            | join("\n")
+          ) else "" end
+        ')
+
         local temperatures
-        temperatures=$(echo "$processed_data" | jq -r '.temperatures[]')
+        temperatures=$(echo "$processed_data" | jq -r '
+        # Define a function to right-pad a string with spaces
+        def rpad(len; s):
+            (len - (s | length)) as $padding |
+            s + (if $padding <= 0 then "" else "                                                  "[:$padding] end);
+
+        # Function to color the temperature string based on value
+        def colorize_temp:
+            . as $temp_c |
+            if $temp_c > 25 then "\u001b[1;31m"      # Bright Red for high
+            elif $temp_c < 15 then "\u001b[1;34m"   # Bright Blue for cold
+            else ""                                 # Default color
+            end;
+
+        # Calculate the maximum length of all temperature sensor display names
+        (.temperatures | map(.displayName | length) | max // 0) as $max_len |
+
+        .temperatures
+        | group_by(.bridgeName)
+        | map(
+            "   🌉 \u001b[1;36m" + (.[0].bridgeName) + "\u001b[0m\n" +
+            (map(
+                # Apply colorization to the temperature output
+                "    - " + rpad($max_len; .displayName) + " : " +
+                (.celsius | colorize_temp) +
+                (.celsius|tostring) + "°C / " + (.fahrenheit|tostring) + "°F" +
+                (if (.celsius | colorize_temp) != "" then "\u001b[0m" else "" end)
+            ) | join("\n"))
+          )
+        | join("\n")
+        ')
+
         local unreachable_devices
-        unreachable_devices=$(echo "$processed_data" | jq -r '.unreachable_devices[]')
+        unreachable_devices=$(echo "$processed_data" | jq -r '
+        .unreachable_devices
+        | group_by(.bridgeName)
+        | map("   🌉 \u001b[1;36m" + (.[0].bridgeName) + "\u001b[0m\n" + (map("    - " + .type + ": " + .name) | join("\n")))
+        | join("\n")
+        ')
+
         local low_battery_devices
-        low_battery_devices=$(echo "$processed_data" | jq -r '.low_battery_devices[]')
+        low_battery_devices=$(echo "$processed_data" | jq -r '
+        # Define a function to right-pad a string with spaces
+        def rpad(len; s):
+            (len - (s | length)) as $padding |
+            s + (if $padding <= 0 then "" else "                                                  "[:$padding] end);
+
+        # Calculate the maximum length of the "Type: Name" string for all low-battery devices
+        (.low_battery_devices | map(.type + ": " + .name | length) | max // 0) as $max_len |
+
+        .low_battery_devices
+        | group_by(.bridgeName)
+        | map(
+            "   🌉 \u001b[1;36m" + (.[0].bridgeName) + "\u001b[0m\n" +
+            (map(
+                # Use the rpad function to align the text before the battery percentage
+                "    - " + rpad($max_len; .type + ": " + .name) + " (" + .battery + "%)"
+            ) | join("\n"))
+          )
+        | join("\n")
+        ')
 
         # --- Display Output ---
         local monitor_output=""
@@ -2600,7 +2760,7 @@ show_usage() {
     echo "  -s, --create-serials Create or update the light serial number mapping file."
     echo "  -b, --battery-check  Perform a quick check for low battery devices."
     echo "  -u, --unreachable    List all unreachable devices."
-    echo "  -d, --list-devices   List all bridges, rooms/zones, and lights."
+    echo "  -d, --list-devices   List all bridges, rooms/zones, lights, and sensors."
     echo "  -t, --temperature    Display temperature readings from motion sensors."
     echo "  -m, --realtime-mode  Launch a real-time console monitor."
     echo "  -h, --help           Show this help message."
@@ -2620,7 +2780,7 @@ main_menu() {
     echo "  2. Create/Update Light Serial Number Mapping File (-s)"
     echo "  3. Check Device Battery Levels (-b)"
     echo "  4. List Unreachable Devices (-u)"
-    echo "  5. List All Devices (Bridges, Rooms, Lights) (-d)"
+    echo "  5. List All Devices (Bridges, Rooms, Lights, Sensors) (-d)"
     echo "  6. Check Sensor Temperatures (-t)"
     echo "  7. Real-time Console Monitor (-m)"
     echo "  8. Exit"
