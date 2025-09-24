@@ -9,9 +9,13 @@
 # For multi-bridge setups, it fetches data in parallel using a number of
 # jobs appropriate for the system's CPU cores. It can be run in an
 # interactive menu mode or by using command-line arguments for automation.
+# Includes support for Hue Bridge Pro as well (for common functionality, I am
+# yet to explore the new Pro features such as Hue MotionAware<sup>TM</sup>), 
+# all API calls now run over https, as this is enforced by Bridge Pro and 
+# is also backwards compatible with the v2 older Hue Bridges.
 #
 # Author: Lachezar Vladikov
-# Version: 1.4.2
+# Version: 1.4.3
 #
 # ==============================================================================
 # USAGE

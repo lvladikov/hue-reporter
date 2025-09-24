@@ -4,6 +4,8 @@ This cross-platform script connects to one or more Philips Hue Bridges, fetches 
 
 It can be run with an interactive menu or via command-line arguments for automation.
 
+**Includes support for Hue Bridge Pro as well (for common functionality, I am yet to explore the new Pro features such as Hue MotionAware<sup>TM</sup>), all API calls now run over https, as this is enforced by Bridge Pro and is also backwards compatible with the v2 older Hue Bridges**
+
 ## Disclaimer
 
 **Read-Only:** This script is for reporting and visualization purposes only. It performs read-only operations and will not make any changes to the state of your Hue lights, switches, or any other devices. It is a safe tool for visualization and research of your Hue system's configuration.
@@ -143,7 +145,7 @@ This script requires a Bash-compatible shell and the `jq` command-line tool. `cu
     a. In your terminal, run the following `curl` command, replacing `<BRIDGE_IP_ADDRESS>` with your bridge's IP.
 
     ```bash
-    curl -X POST http://<BRIDGE_IP_ADDRESS>/api -H "Content-Type: application/json" -d '{"devicetype":"hue-report#computer"}'
+    curl -k -X POST https://<BRIDGE_IP_ADDRESS>/api -H "Content-Type: application/json" -d '{"devicetype":"hue-report#computer"}'
     ```
 
     b. The command will respond with an error asking you to press the link button.
