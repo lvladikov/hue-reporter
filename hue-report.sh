@@ -135,7 +135,7 @@
 #    a) Run the following `curl` command, replacing `<BRIDGE_IP_ADDRESS>`
 #       with the IP you found in step 1.
 #
-#       curl -X POST http://<BRIDGE_IP_ADDRESS>/api -H "Content-Type: application/json" -d '{"devicetype":"hue_reporter_script#computer"}'
+#       curl -k -X POST https://<BRIDGE_IP_ADDRESS>/api -H "Content-Type: application/json" -d '{"devicetype":"hue_reporter_script#computer"}'
 #
 #    b) The command will seem to hang and will return a response like:
 #       [{"error":{"type":101,"address":"","description":"link button not pressed"}}]
@@ -360,9 +360,9 @@ fetch_data() {
 
         (
             echo "--> Contacting '${current_name}'..."
-            local full_url="http://${current_ip}/api/${current_user}"
+            local full_url="https://${current_ip}/api/${current_user}"
             local response
-            response=$(curl --connect-timeout 5 -s "$full_url")
+            response=$(curl --connect-timeout 5 -s -k "$full_url")
 
             # Add bridge IP and user to the response for later processing
             if [[ -n "$response" && "$response" != *"unauthorized user"* ]]; then
@@ -411,8 +411,8 @@ fetch_data() {
                 if [[ -z "$scene_id" ]]; then continue; fi
                 # Remove potential carriage return for Windows compatibility
                 scene_id=${scene_id%$'\r'}
-                local scene_detail_url="http://${bridge_ip}/api/${bridge_user}/scenes/${scene_id}"
-                curl --connect-timeout 5 -s "$scene_detail_url" | jq -c --arg id "$scene_id" 'select(.lightstates) | {id: $id, lightstates: .lightstates}'
+                local scene_detail_url="https://${bridge_ip}/api/${bridge_user}/scenes/${scene_id}"
+                curl --connect-timeout 5 -s -k "$scene_detail_url" | jq -c --arg id "$scene_id" 'select(.lightstates) | {id: $id, lightstates: .lightstates}'
             done > "$updates_tmp_file"
 
             # 3. If the temporary file is not empty, perform the single merge operation.
@@ -489,8 +489,8 @@ generate_serials_file() {
         tmp_files+=("$tmp_file")
         (
             echo "--> Contacting '${current_name}'..."
-            local full_url="http://${current_ip}/api/${current_user}"
-            local response=$(curl --connect-timeout 5 -s "$full_url")
+            local full_url="https://${current_ip}/api/${current_user}"
+            local response=$(curl --connect-timeout 5 -s -k "$full_url")
             if [[ -n "$response" && "$response" != *"unauthorized user"* ]]; then
                 # We only need lights, groups, and the bridge name from config
                 echo "$response" | jq '{lights: .lights, groups: .groups, bridgeName: .config.name}' > "$tmp_file"
@@ -1052,7 +1052,7 @@ EOF
                 ([[-1,-1,0], [1,-1,0], [1,1,0], [-1,1,0], [-1,-1,1], [1,-1,1], [1,1,1], [-1,1,1]]) as $corners
                 | ($corners | map(project(.) | split(",") | map(tonumber))) as $p_corners
                 | "<div class=\"infographic location-infographic-wrapper\">" +
-                    "<svg viewBox=\"-30 0 260 150\" xmlns=\"http://www.w3.org/2000/svg\" class=\"location-svg\">" +
+                    "<svg viewBox=\"-30 0 260 150\" xmlns=\"https://www.w3.org/2000/svg\" class=\"location-svg\">" +
                     ([ [0,1], [1,2], [2,3], [3,0], [4,5], [5,6], [6,7], [7,4], [0,4], [1,5], [2,6], [3,7] ] | map(
                     "<line x1=\"\($p_corners[.[0]][0])\" y1=\"\($p_corners[.[0]][1])\" x2=\"\($p_corners[.[1]][0])\" y2=\"\($p_corners[.[1]][1])\" stroke=\"#ccc\" stroke-width=\"1\"/>"
                     ) | join("")) +
@@ -1105,7 +1105,7 @@ EOF
                     "<p class=\"detail-row\"><span class=\"label\">Zigbee Channel:</span> " + ($bridge.config.zigbeechannel|tostring) + "</p>" +
                     "<p class=\"detail-row\"><span class=\"label\">API Version:</span> " + $bridge.config.apiversion + "</p>" +
                     "<p class=\"detail-row\"><span class=\"label\">Software Version:</span> " + $bridge.config.swversion + "</p>" +
-                    "<p class=\"detail-row\"><span class=\"label\">API URL:</span> <a href=\"http://" + $bridge.bridge_ip + "/api/" + $bridge.bridge_user + "\" target=\"_blank\">http://" + $bridge.bridge_ip + "/api/" + $bridge.bridge_user + "</a></p>" +
+                    "<p class=\"detail-row\"><span class=\"label\">API URL:</span> <a href=\"https://" + $bridge.bridge_ip + "/api/" + $bridge.bridge_user + "\" target=\"_blank\">https://" + $bridge.bridge_ip + "/api/" + $bridge.bridge_user + "</a></p>" +
                     "</div>"
                 ')
                 if [[ $? -ne 0 ]]; then echo "Error: jq failed processing bridge info for $bridge_name" >&2; report_generation_successful=false; break; fi
@@ -1156,7 +1156,7 @@ EOF
                                 "<p class=\"detail-row\"><span class=\"label\">Type:</span> " + $group_info.value.type + "</p>" +
                                 "<p class=\"detail-row\"><span class=\"label\">Class:</span> " + $group_info.value.class + "</p>" +
                                 "<p class=\"detail-row\"><span class=\"label\">Group ID:</span> " + $group_info.id + "</p>" +
-                                "<p class=\"detail-row\"><span class=\"label\">API URL:</span> <a href=\"http://" + $bridge.bridge_ip + "/api/" + $bridge.bridge_user + "/groups/" + $group_info.id + "\" target=\"_blank\">http://" + $bridge.bridge_ip + "/api/.../groups/" + $group_info.id + "</a></p>" +
+                                "<p class=\"detail-row\"><span class=\"label\">API URL:</span> <a href=\"https://" + $bridge.bridge_ip + "/api/" + $bridge.bridge_user + "/groups/" + $group_info.id + "\" target=\"_blank\">https://" + $bridge.bridge_ip + "/api/.../groups/" + $group_info.id + "</a></p>" +
                                 "<p class=\"detail-row section-header\">Last Action State</p>" +
                                 "<p class=\"detail-row\"><span class=\"label\">State:</span> " + (if $group_info.value.action.on then "On" else "Off" end) + "</p>" +
                                 (if $group_info.value.action.on then ($group_info.value.action | brightness_infographic) else "" end) +
@@ -1175,7 +1175,7 @@ EOF
                                     "<p class=\"detail-row section-header\">Lights in this Group</p>" +
                                     "<table>" + "<tr><th class=\"scene-col-name\">Light Name</th><th class=\"scene-col-id\">ID</th><th class=\"invisible-col\"></th></tr>" + ($group_info.value.lights | map( . as $light_id | $light_id_to_details_map[$light_id] as $light_details | "<tr><td><a href=\"#light-\($light_details.uniqueid // "")\">" + ($light_details.name // $light_id) + "</a></td><td>" + $light_id + "</td><td class=\"invisible-col\"></td></tr>" ) | join("")) + "</table>"
                                 else "" end) +
-                                ( $bridge.scenes | to_entries | map(select(.value.type == "GroupScene" and .value.group == $group_info.id)) | if length > 0 then "<p class=\"detail-row section-header\">Group Scenes</p>" + (map( . as $scene | "<h4 class=\"scene-title\" id=\"\($safe_bridge_name)-scene-\($scene.key)\"><a href=\"http://" + $bridge.bridge_ip + "/api/" + $bridge.bridge_user + "/scenes/" + $scene.key + "\" target=\"_blank\">" + $scene.value.name + "</a></h4>" + "<table>" + "<tr><th class=\"scene-col-name\">Light Name</th><th class=\"scene-col-id\">ID</th><th class=\"scene-col-state\">Scene State</th></tr>" + ( $scene.value.lights | map( . as $light_id | $light_id_to_details_map[$light_id] as $light_details | (($scene.value.lightstates // {})[$light_id] // $scene.value.action) as $light_state | "<tr><td><a href=\"#light-\($light_details.uniqueid // "")\">" + ($light_details.name // $light_id) + "</a></td><td>" + $light_id + "</td><td>\($light_state | scene_state_display)</td></tr>" ) | join("")) + "</table>" ) | join("")) else "" end ) + "</div>"
+                                ( $bridge.scenes | to_entries | map(select(.value.type == "GroupScene" and .value.group == $group_info.id)) | if length > 0 then "<p class=\"detail-row section-header\">Group Scenes</p>" + (map( . as $scene | "<h4 class=\"scene-title\" id=\"\($safe_bridge_name)-scene-\($scene.key)\"><a href=\"https://" + $bridge.bridge_ip + "/api/" + $bridge.bridge_user + "/scenes/" + $scene.key + "\" target=\"_blank\">" + $scene.value.name + "</a></h4>" + "<table>" + "<tr><th class=\"scene-col-name\">Light Name</th><th class=\"scene-col-id\">ID</th><th class=\"scene-col-state\">Scene State</th></tr>" + ( $scene.value.lights | map( . as $light_id | $light_id_to_details_map[$light_id] as $light_details | (($scene.value.lightstates // {})[$light_id] // $scene.value.action) as $light_state | "<tr><td><a href=\"#light-\($light_details.uniqueid // "")\">" + ($light_details.name // $light_id) + "</a></td><td>" + $light_id + "</td><td>\($light_state | scene_state_display)</td></tr>" ) | join("")) + "</table>" ) | join("")) else "" end ) + "</div>"
                             else "" end
                         ) +
                         (
@@ -1201,7 +1201,7 @@ EOF
                                     "<p class=\"detail-row\"><span class=\"label\">Serial Number:</span> " + (if ($serials[$light.uniqueid].serialNumber // "") == "" then "N/A" else $serials[$light.uniqueid].serialNumber end) + "</p>" +
                                     "<p class=\"detail-row\"><span class=\"label\">Product ID:</span> " + (if $light.productid then "<a href=\"https://www.google.com/search?q=Philips+Hue+" + (($light.productid // "") | gsub(" "; "+")) + "\" target=\"_blank\">" + $light.productid + "</a>" else "N/A" end) + "</p>" +
                                     "<p class=\"detail-row\"><span class=\"label\">Unique ID:</span> " + ($light.uniqueid // "N/A") + "</p>" +
-                                    "<p class=\"detail-row\"><span class=\"label\">API URL:</span> <a href=\"http://" + $bridge.bridge_ip + "/api/" + $bridge.bridge_user + "/lights/" + $light.light_id + "\" target=\"_blank\">http://" + $bridge.bridge_ip + "/api/.../lights/" + $light.light_id + "</a></p>" +
+                                    "<p class=\"detail-row\"><span class=\"label\">API URL:</span> <a href=\"https://" + $bridge.bridge_ip + "/api/" + $bridge.bridge_user + "/lights/" + $light.light_id + "\" target=\"_blank\">https://" + $bridge.bridge_ip + "/api/.../lights/" + $light.light_id + "</a></p>" +
                                     "<p class=\"detail-row section-header\">ToC</p><p class=\"detail-row\"><a href=\"#top\">Jump to Top</a></p>" +
                                 "</div>"
                             ) | join(""))
@@ -1258,7 +1258,7 @@ EOF
                                         ($value|tostring)
                                     end) + "</p>"
                                 ) | join("")) +
-                                "<p class=\"detail-row\"><span class=\"label\">API URL:</span> <a href=\"http://" + $bridge.bridge_ip + "/api/" + $bridge.bridge_user + "/sensors/" + $sensor.key + "\" target=\"_blank\">http://" + $bridge.bridge_ip + "/api/.../sensors/" + $sensor.key + "</a></p>" +
+                                "<p class=\"detail-row\"><span class=\"label\">API URL:</span> <a href=\"https://" + $bridge.bridge_ip + "/api/" + $bridge.bridge_user + "/sensors/" + $sensor.key + "\" target=\"_blank\">https://" + $bridge.bridge_ip + "/api/.../sensors/" + $sensor.key + "</a></p>" +
                                 "<p class=\"detail-row section-header\">ToC</p><p class=\"detail-row\"><a href=\"#top\">Jump to Top</a></p>" +
                                 "</div>"
                             ) | join("")
@@ -1287,7 +1287,7 @@ EOF
                                 "<p class=\"detail-row\"><span class=\"label\">Address:</span> <code>" + $schedule.value.command.address + "</code></p>" +
                                 "<p class=\"detail-row\"><span class=\"label\">Method:</span> " + $schedule.value.command.method + "</p>" +
                                 "<p class=\"detail-row\"><span class=\"label\">Body:</span> <pre style=\"white-space: pre-wrap; word-wrap: break-word; background-color: #eee; padding: 5px; border-radius: 4px;\">" + ($schedule.value.command.body|tojson) + "</pre></p>" +
-                                "<p class=\"detail-row\"><span class=\"label\">API URL:</span> <a href=\"http://" + $bridge.bridge_ip + "/api/" + $bridge.bridge_user + "/schedules/" + $schedule.key + "\" target=\"_blank\">http://" + $bridge.bridge_ip + "/api/.../schedules/" + $schedule.key + "</a></p>" +
+                                "<p class=\"detail-row\"><span class=\"label\">API URL:</span> <a href=\"https://" + $bridge.bridge_ip + "/api/" + $bridge.bridge_user + "/schedules/" + $schedule.key + "\" target=\"_blank\">https://" + $bridge.bridge_ip + "/api/.../schedules/" + $schedule.key + "</a></p>" +
                                 "<p class=\"detail-row section-header\">ToC</p><p class=\"detail-row\"><a href=\"#top\">Jump to Top</a></p>" +
                                 "</div>"
                             ) | join("")
@@ -1501,7 +1501,7 @@ EOF
                                 "<p class=\"detail-row section-header\">Logic</p>" +
                                 "<b>Conditions:</b>" + (.value.conditions | map(format_condition) | join("")) +
                                 "<b>Actions:</b>" + (.value.actions | map(format_action) | join("")) +
-                                "<p class=\"detail-row\"><span class=\"label\">API URL:</span> <a href=\"http://" + $bridge.bridge_ip + "/api/" + $bridge.bridge_user + "/rules/" + $rule.key + "\" target=\"_blank\">http://" + $bridge.bridge_ip + "/api/.../rules/" + $rule.key + "</a></p>" +
+                                "<p class=\"detail-row\"><span class=\"label\">API URL:</span> <a href=\"https://" + $bridge.bridge_ip + "/api/" + $bridge.bridge_user + "/rules/" + $rule.key + "\" target=\"_blank\">https://" + $bridge.bridge_ip + "/api/.../rules/" + $rule.key + "</a></p>" +
                                 "<p class=\"detail-row section-header\">ToC</p><p class=\"detail-row\"><a href=\"#top\">Jump to Top</a></p>" +
                                 "</div>"
                             ) | join("")
@@ -1552,7 +1552,7 @@ EOF
                                     ) | join("")
                                 ) +
                                 "</ul>" +
-                                "<p class=\"detail-row\"><span class=\"label\">API URL:</span> <a href=\"http://" + $bridge.bridge_ip + "/api/" + $bridge.bridge_user + "/resourcelinks/" + $link.key + "\" target=\"_blank\">http://" + $bridge.bridge_ip + "/api/.../resourcelinks/" + $link.key + "</a></p>" +
+                                "<p class=\"detail-row\"><span class=\"label\">API URL:</span> <a href=\"https://" + $bridge.bridge_ip + "/api/" + $bridge.bridge_user + "/resourcelinks/" + $link.key + "\" target=\"_blank\">https://" + $bridge.bridge_ip + "/api/.../resourcelinks/" + $link.key + "</a></p>" +
                                 "<p class=\"detail-row section-header\">ToC</p><p class=\"detail-row\"><a href=\"#top\">Jump to Top</a></p>" +
                                 "</div>"
                             ) | join("")
@@ -1878,9 +1878,9 @@ fetch_all_simple_data() {
         tmp_files+=("$tmp_file")
 
         (
-            local full_url="http://${current_ip}/api/${current_user}"
+            local full_url="https://${current_ip}/api/${current_user}"
             local response
-            response=$(curl --connect-timeout 5 -s "$full_url")
+            response=$(curl --connect-timeout 5 -s -k "$full_url")
 
             # If the response is valid, extract only the requested key and bridge name
             if [[ -n "$response" && "$response" != *"unauthorized user"* ]]; then
@@ -2340,9 +2340,9 @@ fetch_all_monitor_data() {
         tmp_files+=("$tmp_file")
 
         (
-            local full_url="http://${current_ip}/api/${current_user}"
+            local full_url="https://${current_ip}/api/${current_user}"
             local response
-            response=$(curl --connect-timeout 5 -s "$full_url")
+            response=$(curl --connect-timeout 5 -s -k "$full_url")
 
             # If the response is valid, extract lights, sensors, and bridge name
             if [[ -n "$response" && "$response" != *"unauthorized user"* ]]; then
